@@ -22,7 +22,20 @@ cd kinderopvang-locatiemanager-scraper
    ```bash
 pip install -r requirements.txt
 ```
-3. Voeg je SerpAPI-key in `app.py` in.
+3. **SerpAPI API Key verkrijgen**
+   
+   - Ga naar [SerpAPI](https://serpapi.com/) en maak een gratis account aan.
+   - Na inloggen vind je je persoonlijke API Key onder "Dashboard → API Key".
+   - Vervang in `app.py` de placeholder:
+     ```python
+     SERPAPI_KEY = "JOUW_SERPAPI_API_KEY_HIER"
+     ```
+     met jouw gekopieerde key.
+   - Optioneel: sla de key op als environment-variabele (aanbevolen):
+     ```bash
+     export SERPAPI_KEY="<jouw_api_key>"
+     ```
+     en wijzig `app.py` om te lezen uit `os.getenv("SERPAPI_KEY")`.
 
 ## 🚀 Gebruik
 ```bash

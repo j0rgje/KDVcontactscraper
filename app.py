@@ -8,7 +8,7 @@ from datetime import datetime
 from io import BytesIO
 
 # Configuratie SerpAPI
-SERPAPI_KEY = "JOUW_SERPAPI_API_KEY_HIER"
+SERPAPI_KEY = "7ce7bed3558945953f44c95e367ac45a37725f91631e37858b0462715d72461b"
 
 @st.cache_data
 def zoek_website_bij_naam(locatienaam, plaats):

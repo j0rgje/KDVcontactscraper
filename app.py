@@ -8,7 +8,7 @@ from datetime import datetime
 from io import BytesIO
 from supabase import create_client
 
-# Page config first
+# Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
 # Initialize session state
@@ -16,112 +16,80 @@ if "session" not in st.session_state:
     st.session_state.session = None
 if "user" not in st.session_state:
     st.session_state.user = None
+if "login_error" not in st.session_state:
+    st.session_state.login_error = None
+if "signup_error" not in st.session_state:
+    st.session_state.signup_error = None
+if "signup_success" not in st.session_state:
+    st.session_state.signup_success = False
 
-# Initialize Supabase
-SUPABASE_URL = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
+# Supabase initialization
+SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Authentication
+# Authentication flow
 if st.session_state.session is None:
-    action = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
+    st.sidebar.title("Authenticatie")
+    action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
 
-    if action == "Registreren":
+    if action == "Inloggen":
+        st.title("Login")
+        with st.form("login_form"):  
+            email = st.text_input("E-mail")
+            password = st.text_input("Wachtwoord", type="password")
+            submit = st.form_submit_button("Inloggen")
+        if submit:
+            res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            err = getattr(res, 'error', None)
+            sess = getattr(res, 'session', None)
+            user = getattr(res, 'user', None)
+            if err:
+                st.session_state.login_error = err.message
+            elif sess is None:
+                st.session_state.login_error = "Geen geldige sessie ontvangen. Heb je je e-mail bevestigd?"
+            else:
+                st.session_state.session = sess
+                st.session_state.user = {"email": user.email, "id": user.id} if user else None
+                st.session_state.login_error = None
+        if st.session_state.login_error:
+            st.error(st.session_state.login_error)
+        st.stop()
+
+    else:  # Registreren
         st.title("Nieuw account aanmaken")
-        def signup_callback():
-            res = supabase.auth.sign_up({"email": signup_email, "password": signup_password})
+        with st.form("signup_form"):  
+            email = st.text_input("E-mail (gebruikersnaam)")
+            password = st.text_input("Wachtwoord", type="password")
+            submit = st.form_submit_button("Account aanmaken")
+        if submit:
+            res = supabase.auth.sign_up({"email": email, "password": password})
             err = getattr(res, 'error', None)
             if err:
                 st.session_state.signup_error = err.message
             else:
                 st.session_state.signup_success = True
-
-        with st.form("signup_form"):
-            signup_email = st.text_input("E-mail (gebruikersnaam)")
-            signup_password = st.text_input("Wachtwoord", type="password")
-            submit_signup = st.form_submit_button("Account aanmaken", on_click=signup_callback)
-        if st.session_state.get('signup_error'):
-            st.error(f"Registratie mislukt: {st.session_state.signup_error}")
-        if st.session_state.get('signup_success'):
+                st.session_state.signup_error = None
+        if st.session_state.signup_error:
+            st.error(st.session_state.signup_error)
+        if st.session_state.signup_success:
             st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
         st.stop()
 
-    # Login form
-    st.title("Login")
-    def login_callback():
-        res = supabase.auth.sign_in_with_password({"email": login_email, "password": login_password})
-        err = getattr(res, 'error', None)
-        sess = getattr(res, 'session', None)
-        user = getattr(res, 'user', None)
-        if err:
-            st.session_state.login_error = err.message
-        elif sess is None:
-            st.session_state.login_error = "Geen geldige sessie ontvangen. Heb je je e-mail bevestigd?"
-        else:
-            st.session_state.session = sess
-            st.session_state.user = {"email": user.email, "id": user.id} if user else None
-
-    with st.form("login_form"):
-        login_email = st.text_input("E-mail")
-        login_password = st.text_input("Wachtwoord", type="password")
-        submit_login = st.form_submit_button("Inloggen", on_click=login_callback)
-    if st.session_state.get('login_error'):
-        st.error(f"Inloggen mislukt: {st.session_state.login_error}")
-    if st.session_state.session is None:
-        st.stop()
-if st.session_state.session is None:
-    # Choose action
-    action = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
-
-    if action == "Registreren":
-        st.title("Nieuw account aanmaken")
-        with st.form("signup_form"):  # signup form
-            email = st.text_input("E-mail (gebruikersnaam)")
-            password = st.text_input("Wachtwoord", type="password")
-            signup = st.form_submit_button("Account aanmaken")
-        if signup:
-            res = supabase.auth.sign_up({"email": email, "password": password})
-            err = getattr(res, 'error', None)
-            if err:
-                st.error(f"Registratie mislukt: {err.message}")
-            else:
-                st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
-        st.stop()
-
-    # Login form
-    st.title("Login")
-    with st.form("login_form"):
-        email = st.text_input("E-mail")
-        password = st.text_input("Wachtwoord", type="password")
-        login = st.form_submit_button("Inloggen")
-    if login:
-        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-        err = getattr(res, 'error', None)
-        session = getattr(res, 'session', None)
-        user = getattr(res, 'user', None)
-        if err:
-            st.error(f"Inloggen mislukt: {err.message}")
-        elif session is None:
-            st.error("Inloggen mislukt: geen geldige sessie ontvangen. Heb je je e-mail bevestigd?")
-        else:
-            # set session and user, will skip stop below
-            st.session_state.session = session
-            st.session_state.user = {"email": user.email, "id": user.id} if user else None
-    # if still not logged in, prevent showing main UI
-    if st.session_state.session is None:
-        st.stop()
-
-# Main UI
-# Sidebar user info and logout
+# Main UI: user is logged in
 user_info = st.session_state.user or {}
-st.sidebar.write(f"Ingelogd als: {user_info.get('email', 'Onbekend')}")
-if st.sidebar.button("Log uit"):
-    st.session_state.session = None
-    st.session_state.user = None
-    st.experimental_rerun()
+with st.sidebar:
+    st.write(f"Ingelogd als: {user_info.get('email', 'Onbekend')}")
+    if st.button("Log uit"):
+        st.session_state.session = None
+        st.session_state.user = None
+        st.session_state.login_error = None
+        st.session_state.signup_error = None
+        st.session_state.signup_success = False
+        st.experimental_rerun()
 
-# SerpAPI-key
-SERPAPI_KEY = st.secrets["SERPAPI_KEY"]
+# SerpAPI-key uit secrets
+SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
 
 @st.cache_data
 def zoek_website_bij_naam(locatienaam, plaats):

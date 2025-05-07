@@ -20,6 +20,7 @@ if "session" not in st.session_state:
 # Keuze: inloggen of registreren
 if not st.session_state.session:
     actie = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
+
     if actie == "Registreren":
         st.title("Nieuw account aanmaken")
         with st.form(key="signup_form"):
@@ -27,29 +28,33 @@ if not st.session_state.session:
             password = st.text_input("Wachtwoord", type="password")
             signup = st.form_submit_button("Registreren")
         if signup:
-            res = supabase.auth.sign_up({"email": email, "password": password})
-            if res.get('error'):
-                st.error(f"Registratie mislukt: {res['error']['message']}")
+            # Sign up gebruiker via Supabase
+            result = supabase.auth.sign_up({"email": email, "password": password})
+            if result.error:
+                st.error(f"Registratie mislukt: {result.error.message}")
             else:
                 st.success("Registratie gelukt! Controleer je e-mail voor verificatie.")
         st.stop()
-    else:
+
+    else:  # Inloggen
         st.title("Login")
         with st.form(key="login_form"):
             email = st.text_input("E-mail")
             password = st.text_input("Wachtwoord", type="password")
             login = st.form_submit_button("Inloggen")
         if login:
-            res = supabase.auth.sign_in({"email": email, "password": password})
-            if res.get('error') or not res.get('data'):
-                st.error("Onjuiste e-mail of wachtwoord.")
+            # Log in via Supabase
+            result = supabase.auth.sign_in({"email": email, "password": password})
+            if result.error or not result.session:
+                msg = result.error.message if result.error else "Onbekende fout bij inloggen."
+                st.error(f"Inloggen mislukt: {msg}")
             else:
-                st.session_state.session = res['data']
+                st.session_state.session = result.session
                 st.experimental_rerun()
         st.stop()
 
 # Vanaf hier is de gebruiker ingelogd
-user_email = st.session_state.session['user']['email']
+user_email = st.session_state.session.user.email  # pydantic model attributen
 st.sidebar.write(f"Ingelogd als: {user_email}")
 
 # SerpAPI-key uit secrets
@@ -62,10 +67,10 @@ def zoek_website_bij_naam(locatienaam, plaats):
     try:
         resp = requests.get("https://serpapi.com/search", params=params, timeout=10)
         data = resp.json()
-        for res in data.get("organic_results", []):
-            if "link" in res:
-                return res["link"]
-    except:
+        for item in data.get("organic_results", []):
+            if "link" in item:
+                return item["link"]
+    except Exception:
         return None
     return None
 

@@ -10,6 +10,9 @@ from supabase import create_client
 import altair as alt
 import phonenumbers
 import streamlit.components.v1 as components  # for JS reload
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
 
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
@@ -118,8 +121,8 @@ def scrape_contactgegevens(url):
         for match in phonenumbers.PhoneNumberMatcher(text, "NL"):
             phones.append(phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL))
         result['telefoons'] = phones
-        # Addresses (straat + nummer, postcode)
-        addr_pattern = r"[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+|\d{4}\s?[A-Z]{2}"  # street+nr or Dutch postcode
+        # Addresses (street+nr or postcode)
+        addr_pattern = r"[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+|\d{4}\s?[A-Z]{2}"
         result['adressen'] = re.findall(addr_pattern, text)
         # Managers
         result['managers'] = [line.strip() for line in text.split("\n") if re.search(r"locatiemanager", line, flags=re.IGNORECASE)]
@@ -182,7 +185,23 @@ if not input_df.empty and st.button("Start scraping"):
     st.download_button("Download CSV", data=res_df.to_csv(index=False).encode('utf-8'),
                        file_name=f"locatiemanager-gegevens-{nu}.csv",
                        mime="text/csv")
-    st.info("PDF-export (placeholder)")
+    # Generate PDF
+    buf_pdf = BytesIO()
+    doc = SimpleDocTemplate(buf_pdf, pagesize=letter)
+    data_pdf = [res_df.columns.tolist()] + res_df.values.tolist()
+    table = Table(data_pdf)
+    style = TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ])
+    table.setStyle(style)
+    doc.build([table])
+    buf_pdf.seek(0)
+    st.download_button("Download PDF", data=buf_pdf,
+                       file_name=f"locatiemanager-gegevens-{nu}.pdf",
+                       mime="application/pdf")
+    
     # Dashboard
     st.header("Dashboard & Visualisaties")
     totaal = len(res_df)

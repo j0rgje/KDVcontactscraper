@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 from io import BytesIO
 from supabase import create_client
+import streamlit.components.v1 as components  # for JS reload
 
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")

@@ -81,12 +81,13 @@ user_info = st.session_state.user or {}
 with st.sidebar:
     st.write(f"Ingelogd als: {user_info.get('email', 'Onbekend')}")
     if st.button("Log uit"):
+        # Reset session and return to login
         st.session_state.session = None
         st.session_state.user = None
         st.session_state.login_error = None
         st.session_state.signup_error = None
         st.session_state.signup_success = False
-        st.experimental_rerun()
+        st.stop()
 
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")

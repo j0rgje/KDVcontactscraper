@@ -64,6 +64,14 @@ if st.session_state.session is None:
 # User is logged in at this point
 user_info = st.session_state.user or {}
 st.sidebar.write(f"Ingelogd als: {user_info.get('email', 'Onbekend')}")
+# Logout button
+if st.sidebar.button("Log uit"):
+    st.session_state.session = None
+    st.session_state.user = None
+    try:
+        st.experimental_rerun()
+    except AttributeError:
+        st.sidebar.info("Ververs de pagina om uit te loggen.")
 
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets["SERPAPI_KEY"]

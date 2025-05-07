@@ -17,7 +17,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 if "session" not in st.session_state:
     st.session_state.session = None
 
-# Keuze: inloggen of registreren
+# Actie: inloggen of registreren
 if not st.session_state.session:
     actie = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
 
@@ -30,12 +30,14 @@ if not st.session_state.session:
         if signup:
             # Registratie via Supabase Auth
             response = supabase.auth.sign_up({"email": email, "password": password})
-            error = response.get('error')
+            error = getattr(response, 'error', None)
             if error:
-                st.error(f"Registratie mislukt: {error['message']}")
+                # API-fout
+                st.error(f"Registratie mislukt: {error.message}")
             else:
                 st.success("Registratie gelukt! Controleer je e-mail voor verificatie.")
         st.stop()
+
     else:
         st.title("Login")
         with st.form(key="login_form"):
@@ -43,24 +45,23 @@ if not st.session_state.session:
             password = st.text_input("Wachtwoord", type="password")
             login = st.form_submit_button("Inloggen")
         if login:
-            # Login via Supabase Auth (v2)
+            # Login via Supabase Auth
             response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-            error = response.get('error')
-            data = response.get('data') or {}
-            session = data.get('session')
-            user = data.get('user')
+            error = getattr(response, 'error', None)
+            session = getattr(response, 'session', None)
             if error:
-                st.error(f"Inloggen mislukt: {error['message']}")
-            elif not session or not user:
-                st.error("Inloggen mislukt: geen sessie ontvangen. Controleer je e-mail bevestiging.")
+                st.error(f"Inloggen mislukt: {error.message}")
+            elif not session:
+                st.error("Inloggen mislukt: geen sessie ontvangen. Controleer e-mailbevestiging.")
             else:
+                # Sla sessie op
                 st.session_state.session = session
                 st.experimental_rerun()
         st.stop()
 
-# Vanaf hier is de gebruiker ingelogd
+# Na inloggen
 session = st.session_state.session
-user_email = session.get('user', {}).get('email', 'Onbekend')
+user_email = session.user.email if hasattr(session, 'user') else 'Onbekend'
 st.sidebar.write(f"Ingelogd als: {user_email}")
 
 # SerpAPI-key uit secrets
@@ -76,7 +77,7 @@ def zoek_website_bij_naam(locatienaam, plaats):
         for item in data.get("organic_results", []):
             if "link" in item:
                 return item["link"]
-    except:
+    except Exception:
         return None
     return None
 

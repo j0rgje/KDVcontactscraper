@@ -13,9 +13,10 @@ SUPABASE_URL = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Ensure session_state key for user session
+# Ensure session_state keys for user session
 if "session" not in st.session_state:
     st.session_state.session = None
+if "user" not in st.session_state:
     st.session_state.user = None
 
 # Authentication flow
@@ -29,10 +30,10 @@ if not st.session_state.session:
             password = st.text_input("Wachtwoord", type="password")
             signup_click = st.form_submit_button("Registreren")
         if signup_click:
-            # Supabase sign_up: pass a dict
             res = supabase.auth.sign_up({"email": email, "password": password})
-            if getattr(res, 'error', None):
-                st.error(f"Registratie mislukt: {res.error.message}")
+            err = getattr(res, "error", None)
+            if err:
+                st.error(f"Registratie mislukt: {err.message}")
             else:
                 st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
         st.stop()
@@ -44,29 +45,26 @@ if not st.session_state.session:
         password = st.text_input("Wachtwoord", type="password")
         login_click = st.form_submit_button("Inloggen")
     if login_click:
-        # Supabase sign_in_with_password: pass a dict
         res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-        # Check for error
-        if getattr(res, 'error', None):
-            st.error(f"Inloggen mislukt: {res.error.message}")
-            st.stop()
-        # Extract data
-        data = getattr(res, 'data', None)
-        if not data or not getattr(data, 'session', None) or not getattr(data, 'user', None):
+        err = getattr(res, "error", None)
+        session = getattr(res, "session", None)
+        user = getattr(res, "user", None)
+        if err:
+            st.error(f"Inloggen mislukt: {err.message}")
+        elif not session:
             st.error("Inloggen mislukt: geen geldige sessie ontvangen. Heb je je e-mail bevestigd?")
-            st.stop()
-        # Save session and user
-        st.session_state.session = data.session
-        st.session_state.user = {"email": data.user.email, "id": data.user.id}
-        st.experimental_rerun()
+        else:
+            st.session_state.session = session
+            st.session_state.user = {"email": user.email, "id": user.id} if user else None
+            st.experimental_rerun()
     st.stop()
 
 # User is now logged in
-user = st.session_state.user
-st.sidebar.write(f"Ingelogd als: {user.get('email', 'Onbekend')}")
+user_info = st.session_state.user or {}
+st.sidebar.write(f"Ingelogd als: {user_info.get('email', 'Onbekend')}")
 
 # SerpAPI-key uit secrets
-SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
+SERPAPI_KEY = st.secrets["SERPAPI_KEY"]
 
 @st.cache_data
 def zoek_website_bij_naam(locatienaam, plaats):

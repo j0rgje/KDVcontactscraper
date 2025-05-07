@@ -8,9 +8,9 @@ from datetime import datetime
 from io import BytesIO
 from supabase import create_client
 
-# Init Supabase client
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+# Init Supabase client using env vars uit secrets
+SUPABASE_URL = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Sessie state voor authenticatie
@@ -53,11 +53,10 @@ user_email = st.session_state.session['user']['email']
 st.sidebar.write(f"Ingelogd als: {user_email}")
 
 # SerpAPI-key uit secrets
-df = None
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
 
 @st.cache_data
-def zoek_website_bij_naam(locatienaam, plaats):
+ def zoek_website_bij_naam(locatienaam, plaats):
     query = f"{locatienaam} {plaats} kinderopvang"
     params = {"q": query, "api_key": SERPAPI_KEY, "engine": "google"}
     try:

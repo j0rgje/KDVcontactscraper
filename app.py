@@ -6,11 +6,54 @@ import re
 import time
 from datetime import datetime
 from io import BytesIO
-import phonenumbers
 
-# Configuratie SerpAPI
-SERPAPI_KEY = st.secrets["SERPAPI_KEY"]
+# Haal gebruikers en SerpAPI-key uit Streamlit Secrets
+USERS = st.secrets.get("users", {})  # dict: {"user1": "pass1", ...}
+SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
 
+# Sessie state voor authenticatie
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+# Actie selectie: inloggen of account aanmaken
+actie = None
+if not st.session_state.authenticated:
+    actie = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Account aanmaken"] )
+
+if not st.session_state.authenticated and actie == "Account aanmaken":
+    st.title("Nieuw account aanmaken")
+    with st.form(key="signup_form"):
+        new_user = st.text_input("Kies een gebruikersnaam")
+        new_pass = st.text_input("Kies een wachtwoord", type="password")
+        signup = st.form_submit_button("Account genereren")
+    if signup:
+        if new_user in USERS:
+            st.error("Deze gebruikersnaam bestaat al.")
+        else:
+            st.success("Account klaargezet!")
+            st.markdown(
+                "Kopieer de volgende regel en plak in je `.streamlit/secrets.toml` onder `[users]`:"
+            )
+            st.code(f"{new_user} = \"{new_pass}\"", language="toml")
+    st.stop()
+
+# Login scherm
+if not st.session_state.authenticated:
+    st.title("Login")
+    with st.form(key="login_form"):
+        input_user = st.text_input("Gebruikersnaam")
+        input_pass = st.text_input("Wachtwoord", type="password")
+        submit = st.form_submit_button("Inloggen")
+    if submit:
+        if input_user in USERS and input_pass == USERS[input_user]:
+            st.session_state.authenticated = True
+            st.experimental_rerun()
+        else:
+            st.error("Onjuiste gebruikersnaam of wachtwoord.")
+    st.stop()
+
+# Vanaf hier is de gebruiker ingelogd
+# Configuratie SerpAPI zoek- en scrape-functies
 @st.cache_data
 def zoek_website_bij_naam(locatienaam, plaats):
     query = f"{locatienaam} {plaats} kinderopvang"

@@ -30,8 +30,13 @@ if not st.session_state.session:
         if signup:
             # Sign up gebruiker via Supabase
             result = supabase.auth.sign_up({"email": email, "password": password})
-            if result.error:
-                st.error(f"Registratie mislukt: {result.error.message}")
+            # Check op error of ontbrekend user object
+            error_attr = getattr(result, 'error', None)
+            user_attr = getattr(result, 'user', None)
+            if error_attr:
+                st.error(f"Registratie mislukt: {error_attr.message}")
+            elif not user_attr:
+                st.error("Registratie mislukt: geen gebruikersgegevens ontvangen.")
             else:
                 st.success("Registratie gelukt! Controleer je e-mail voor verificatie.")
         st.stop()
@@ -45,11 +50,13 @@ if not st.session_state.session:
         if login:
             # Log in via Supabase
             result = supabase.auth.sign_in({"email": email, "password": password})
-            if result.error or not result.session:
-                msg = result.error.message if result.error else "Onbekende fout bij inloggen."
+            error_attr = getattr(result, 'error', None)
+            session_attr = getattr(result, 'session', None)
+            if error_attr or not session_attr:
+                msg = error_attr.message if error_attr else "Onbekende fout bij inloggen."
                 st.error(f"Inloggen mislukt: {msg}")
             else:
-                st.session_state.session = result.session
+                st.session_state.session = session_attr
                 st.experimental_rerun()
         st.stop()
 

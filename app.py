@@ -112,6 +112,16 @@ def scrape_contactgegevens(url):
     except Exception as e:
         return {"error": str(e)}
 
+# Main UI Sidebar Logout
+with st.sidebar:
+    user_email = st.session_state.user.get('email', 'Onbekend') if st.session_state.user else 'Onbekend'
+    st.write(f"Ingelogd als: {user_email}")
+    if st.button("Log uit"):
+        # Reset session state and reload
+        for key in ['session','user','login_error','signup_error','signup_success']:
+            if key in st.session_state: st.session_state[key] = None
+        components.html("<script>window.location.reload();</script>", height=0)
+
 # Scraper UI
 st.title("Kinderopvang Locatiemanager Scraper")
 uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])

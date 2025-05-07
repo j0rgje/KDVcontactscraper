@@ -24,6 +24,52 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Authentication
 if st.session_state.session is None:
+    action = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
+
+    if action == "Registreren":
+        st.title("Nieuw account aanmaken")
+        def signup_callback():
+            res = supabase.auth.sign_up({"email": signup_email, "password": signup_password})
+            err = getattr(res, 'error', None)
+            if err:
+                st.session_state.signup_error = err.message
+            else:
+                st.session_state.signup_success = True
+
+        with st.form("signup_form"):
+            signup_email = st.text_input("E-mail (gebruikersnaam)")
+            signup_password = st.text_input("Wachtwoord", type="password")
+            submit_signup = st.form_submit_button("Account aanmaken", on_click=signup_callback)
+        if st.session_state.get('signup_error'):
+            st.error(f"Registratie mislukt: {st.session_state.signup_error}")
+        if st.session_state.get('signup_success'):
+            st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
+        st.stop()
+
+    # Login form
+    st.title("Login")
+    def login_callback():
+        res = supabase.auth.sign_in_with_password({"email": login_email, "password": login_password})
+        err = getattr(res, 'error', None)
+        sess = getattr(res, 'session', None)
+        user = getattr(res, 'user', None)
+        if err:
+            st.session_state.login_error = err.message
+        elif sess is None:
+            st.session_state.login_error = "Geen geldige sessie ontvangen. Heb je je e-mail bevestigd?"
+        else:
+            st.session_state.session = sess
+            st.session_state.user = {"email": user.email, "id": user.id} if user else None
+
+    with st.form("login_form"):
+        login_email = st.text_input("E-mail")
+        login_password = st.text_input("Wachtwoord", type="password")
+        submit_login = st.form_submit_button("Inloggen", on_click=login_callback)
+    if st.session_state.get('login_error'):
+        st.error(f"Inloggen mislukt: {st.session_state.login_error}")
+    if st.session_state.session is None:
+        st.stop()
+if st.session_state.session is None:
     # Choose action
     action = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
 

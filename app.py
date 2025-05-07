@@ -56,7 +56,7 @@ st.sidebar.write(f"Ingelogd als: {user_email}")
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
 
 @st.cache_data
- def zoek_website_bij_naam(locatienaam, plaats):
+def zoek_website_bij_naam(locatienaam, plaats):
     query = f"{locatienaam} {plaats} kinderopvang"
     params = {"q": query, "api_key": SERPAPI_KEY, "engine": "google"}
     try:

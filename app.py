@@ -8,22 +8,23 @@ import time
 from datetime import datetime
 from io import BytesIO
 import phonenumbers
-from duckduckgo_search import ddg
 from playwright.sync_api import sync_playwright
+import urllib.parse
 
-# Zet page config vóór alle andere Streamlit-commando's
+# 1) Zet page config vóór alle andere Streamlit-commando's
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
-st.title("Kinderopvang Locatiemanager Scraper (Gratis zoekmethode)")
+# Titel van de app
+st.title("Kinderopvang Locatiemanager Scraper (Gratis DuckDuckGo)")
 
-# Caching-wrapper voor performance
-@st.cache_data
-def zoek_website_bij_naam(locatienaam: str, plaats: str) -> str | None:
-    """Zoek website via DuckDuckGo HTML en fallback naar headless browser indien nodig."""
+# 2) Definieer pure Python-zoekfunctie (geen extra package nodig)
+def _zoek_website_bij_naam(locatienaam: str, plaats: str) -> str | None:
+    """
+    Zoek de eerste organische link via DuckDuckGo HTML-search.
+    """
     query = f"{locatienaam} {plaats} kinderopvang"
-    # 1. DuckDuckGo HTML search
+    url = "https://duckduckgo.com/html/"
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        url = "https://duckduckgo.com/html/"
-        headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.post(url, data={"q": query}, headers=headers, timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -31,28 +32,18 @@ def zoek_website_bij_naam(locatienaam: str, plaats: str) -> str | None:
         if link_tag and link_tag.has_attr("href"):
             return link_tag["href"]
     except Exception:
-        pass
-    # 2. Playwright fallback
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(f"https://duckduckgo.com/?q={urllib.parse.quote(query)}", timeout=15000)
-            link = page.query_selector("a.result__a")
-            href = link.get_attribute("href") if link else None
-            browser.close()
-            return href
-    except Exception:
-        pass
-    return None
+        return None
     return None
 
-@st.cache_data
-def scrape_contactgegevens(url: str) -> dict:
-    """Scrape e-mail, telefoon, adres en functietitel, met Playwright-fallback."""
+# 3) Definieer scrape-functie voor contactgegevens
+def _scrape_contactgegevens(url: str) -> dict:
+    """
+    Scrape e-mail, telefoon, adres en functietitel.
+    Fallback naar Playwright voor JS-gedreven pagina's.
+    """
     result = {"emails": [], "telefoons": [], "adressen": [], "functietitels": [], "error": ""}
     try:
-        # Probeer met requests
+        # Eerste poging via requests
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         content = resp.text
@@ -71,17 +62,18 @@ def scrape_contactgegevens(url: str) -> dict:
 
         # 1. E-mails
         result["emails"] = list(set(re.findall(
-            r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", tekst
+            r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+",
+            tekst
         )))
         # 2. Telefoonnummers
         result["telefoons"] = list({
             phonenumbers.format_number(m.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
             for m in phonenumbers.PhoneNumberMatcher(tekst, "NL")
         })
-        # 3. Adressen
+        # 3. Adressen (NL-straat + nr)
         result["adressen"] = list({
             tag.get_text().strip()
-            for tag in soup.find_all(['address','p','span','div'])
+            for tag in soup.find_all(["address","p","span","div"])
             if re.search(r"\b[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+", tag.get_text())
         })
         # 4. Functietitels
@@ -95,52 +87,63 @@ def scrape_contactgegevens(url: str) -> dict:
         result["error"] = str(e)
     return result
 
-# Upload en verwerking
-uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+# 4) Wrap met caching voor performance
+zoek_website_bij_naam = st.cache_data(_zoek_website_bij_naam)
+scrape_contactgegevens = st.cache_data(_scrape_contactgegevens)
+
+# 5) UI: uploaden Excel en starten scraping
+uploaded_file = st.file_uploader("Upload een Excel-bestand (.xlsx) met kolommen 'locatienaam' en 'plaats'", type=["xlsx"])
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
-    if not {'locatienaam','plaats'}.issubset(df.columns):
-        st.error("Excel moet kolommen 'locatienaam' en 'plaats' bevatten.")
+    if not {"locatienaam", "plaats"}.issubset(df.columns):
+        st.error("Excel moet de kolommen 'locatienaam' en 'plaats' bevatten.")
         st.stop()
 
     st.write("### Ingelezen locaties", df)
     if st.button("Start scraping"):
         resultaten = []
-        errors_df = pd.DataFrame(columns=["locatie","error"])
+        errors_df = pd.DataFrame(columns=["locatie", "error"])
         progress = st.progress(0)
         status = st.empty()
         result_table = st.empty()
 
         for i, row in df.iterrows():
-            naam, plaats = row['locatienaam'], row['plaats']
+            naam, plaats = row["locatienaam"], row["plaats"]
             status.text(f"Verwerk {i+1}/{len(df)}: {naam} ({plaats})")
             site = zoek_website_bij_naam(naam, plaats)
             time.sleep(1)
-            data = scrape_contactgegevens(site) if site else {"error":"Geen website gevonden"}
+            data = scrape_contactgegevens(site) if site else {"error": "Geen website gevonden"}
 
             resultaten.append({
-                'locatienaam':   naam,
-                'plaats':        plaats,
-                'website':       site or '',
-                'emails':        ", ".join(data.get('emails', [])),
-                'telefoons':     ", ".join(data.get('telefoons', [])),
-                'adressen':      ' | '.join(data.get('adressen', [])),
-                'functietitels': ' | '.join(data.get('functietitels', [])),
-                'error':         data.get('error', '')
+                "locatienaam":   naam,
+                "plaats":        plaats,
+                "website":       site or "",
+                "emails":        ", ".join(data.get("emails", [])),
+                "telefoons":     ", ".join(data.get("telefoons", [])),
+                "adressen":      " | ".join(data.get("adressen", [])),
+                "functietitels": " | ".join(data.get("functietitels", [])),
+                "error":         data.get("error", "")
             })
-            if data.get('error'):
-                errors_df.loc[len(errors_df)] = [naam, data['error']]
+            if data.get("error"):
+                errors_df.loc[len(errors_df)] = [naam, data["error"]]
 
             result_table.dataframe(pd.DataFrame(resultaten))
-            progress.progress((i+1)/len(df))
+            progress.progress((i + 1) / len(df))
 
         # Download en tonen
         res_df = pd.DataFrame(resultaten)
-        now = datetime.now().strftime('%Y-%m-%d-%H-%M')
+        now = datetime.now().strftime("%Y-%m-%d-%H-%M")
         fname = f"locatiemanager-gegevens-{now}.xlsx"
-        buf = BytesIO(); res_df.to_excel(buf, index=False); buf.seek(0)
-        st.download_button("Download resultaten", buf, file_name=fname,
-                           mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        buf = BytesIO()
+        res_df.to_excel(buf, index=False)
+        buf.seek(0)
+
+        st.download_button(
+            "Download resultaten",
+            buf,
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
         st.subheader("Resultaten")
         st.dataframe(res_df)
         if not errors_df.empty:

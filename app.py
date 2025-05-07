@@ -32,20 +32,6 @@ if st.session_state.session is None:
             password = st.text_input("Wachtwoord", type="password")
             submit = st.form_submit_button("Account aanmaken")
         if submit:
-            res = supabase.auth.sign_up({"email": email, "password": password})
-            err = getattr(res, 'error', None)
-            if err:
-                st.error(f"Registratie mislukt: {err.message}")
-            else:
-                st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
-        st.stop()
-    else:
-        st.title("Login")
-        with st.form("login_form"):
-            email = st.text_input("E-mail")
-            password = st.text_input("Wachtwoord", type="password")
-            submit = st.form_submit_button("Inloggen")
-        if submit:
             res = supabase.auth.sign_in_with_password({"email": email, "password": password})
             err = getattr(res, 'error', None)
             session = getattr(res, 'session', None)
@@ -55,10 +41,16 @@ if st.session_state.session is None:
             elif session is None:
                 st.error("Inloggen mislukt: geen geldige sessie ontvangen. Heb je je e-mail bevestigd?")
             else:
-                # Successful login: set state
+                # Successful login: set state and rerun to reflect UI immediately
                 st.session_state.session = session
                 st.session_state.user = {"email": user.email, "id": user.id} if user else None
+                try:
+                    st.experimental_rerun()
+                except AttributeError:
+                    pass
         # If still not logged in, stop to show login UI
+        if st.session_state.session is None:
+            st.stop()
         if st.session_state.session is None:
             st.stop()
 

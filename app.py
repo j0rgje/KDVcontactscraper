@@ -9,7 +9,12 @@ from datetime import datetime
 from io import BytesIO
 import phonenumbers
 from playwright.sync_api import sync_playwright
-from serpapi import GoogleSearch
+# SerpAPI import met fallback
+try:
+    from serpapi import GoogleSearch
+except ImportError:
+    st.error("Module 'serpapi' niet gevonden. Voeg 'serpapi' toe aan je requirements.txt en installeer via `pip install serpapi`.")
+    st.stop()
 from authlib.integrations.requests_client import OAuth2Session
 import altair as alt
 
@@ -67,7 +72,7 @@ elif login_method == "Admin":
         else:
             st.error("Onjuiste gebruikersnaam of wachtwoord")
             st.stop()
-            
+
 # Stop als niet geauthenticeerd
 if not authenticated:
     st.stop()

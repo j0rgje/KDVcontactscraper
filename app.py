@@ -137,6 +137,10 @@ if uploaded_file:
             buf = BytesIO(); res_df.to_excel(buf, index=False); buf.seek(0)
             st.download_button("Download resultaten", buf, file_name=fname,
                                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+# Toon de volledige output data op het scherm
+st.subheader("Resultaten")
+st.dataframe(res_df)
             if not errors_df.empty:
                 st.warning("Er waren fouten tijdens scraping:")
                 st.table(errors_df)

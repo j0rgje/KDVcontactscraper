@@ -29,6 +29,7 @@ SUPABASE_KEY = st.secrets.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Authentication flow
+# Authentication flow
 if st.session_state.session is None:
     st.sidebar.title("Authenticatie")
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
@@ -49,9 +50,11 @@ if st.session_state.session is None:
             elif sess is None:
                 st.session_state.login_error = "Geen geldige sessie ontvangen. Heb je je e-mail bevestigd?"
             else:
+                # Successful login: set session and reload via JS
                 st.session_state.session = sess
                 st.session_state.user = {"email": user.email, "id": user.id} if user else None
                 st.session_state.login_error = None
+                components.html("<script>window.location.href=window.location.href;</script>", height=0)
         if st.session_state.login_error:
             st.error(st.session_state.login_error)
         st.stop()
@@ -70,23 +73,12 @@ if st.session_state.session is None:
             else:
                 st.session_state.signup_success = True
                 st.session_state.signup_error = None
+                # reload to show success
+                components.html("<script>window.location.href=window.location.href;</script>", height=0)
         if st.session_state.signup_error:
             st.error(st.session_state.signup_error)
         if st.session_state.signup_success:
             st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
-        st.stop()
-
-# Main UI: user is logged in
-user_info = st.session_state.user or {}
-with st.sidebar:
-    st.write(f"Ingelogd als: {user_info.get('email', 'Onbekend')}")
-    if st.button("Log uit"):
-        # Reset session and return to login
-        st.session_state.session = None
-        st.session_state.user = None
-        st.session_state.login_error = None
-        st.session_state.signup_error = None
-        st.session_state.signup_success = False
         st.stop()
 
 # SerpAPI-key uit secrets

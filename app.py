@@ -28,37 +28,40 @@ if not st.session_state.session:
             password = st.text_input("Wachtwoord", type="password")
             signup = st.form_submit_button("Registreren")
         if signup:
-            # Sign up gebruiker via Supabase
-            res = supabase.auth.sign_up({"email": email, "password": password})
-            err = getattr(res, 'error', None)
-            if err:
-                st.error(f"Registratie mislukt: {err.message}")
+            # Registratie via Supabase Auth
+            response = supabase.auth.sign_up({"email": email, "password": password})
+            error = response.get('error')
+            if error:
+                st.error(f"Registratie mislukt: {error['message']}")
             else:
                 st.success("Registratie gelukt! Controleer je e-mail voor verificatie.")
         st.stop()
-
-    else:  # Inloggen
+    else:
         st.title("Login")
         with st.form(key="login_form"):
             email = st.text_input("E-mail")
             password = st.text_input("Wachtwoord", type="password")
             login = st.form_submit_button("Inloggen")
         if login:
-            # Log in via Supabase (v2 API)
-            res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-            err = getattr(res, 'error', None)
-            session = getattr(res, 'data', None)
-            if err or not session:
-                msg = err.message if err else "Onbekende fout bij inloggen."
-                st.error(f"Inloggen mislukt: {msg}")
+            # Login via Supabase Auth (v2)
+            response = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            error = response.get('error')
+            data = response.get('data') or {}
+            session = data.get('session')
+            user = data.get('user')
+            if error:
+                st.error(f"Inloggen mislukt: {error['message']}")
+            elif not session or not user:
+                st.error("Inloggen mislukt: geen sessie ontvangen. Controleer je e-mail bevestiging.")
             else:
                 st.session_state.session = session
                 st.experimental_rerun()
         st.stop()
 
 # Vanaf hier is de gebruiker ingelogd
-user = st.session_state.session.user
-st.sidebar.write(f"Ingelogd als: {user.email}")
+session = st.session_state.session
+user_email = session.get('user', {}).get('email', 'Onbekend')
+st.sidebar.write(f"Ingelogd als: {user_email}")
 
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
@@ -97,7 +100,6 @@ uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
     st.write("### Ingelezen data", df.head())
-
     if st.button("Start scraping"):
         resultaten = []
         progress = st.progress(0)
@@ -115,7 +117,6 @@ if uploaded_file:
                 'error': data.get('error', '')
             })
             progress.progress((idx+1)/len(df))
-
         res_df = pd.DataFrame(resultaten)
         nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
         fname = f"locatiemanager-gegevens-{nu}.xlsx"

@@ -1,4 +1,3 @@
-import os
 import streamlit as st
 import pandas as pd
 import requests
@@ -8,168 +7,69 @@ import time
 from datetime import datetime
 from io import BytesIO
 import phonenumbers
-from playwright.sync_api import sync_playwright
-# SerpAPI import met fallback
-try:
-    from serpapi import GoogleSearch
-except ImportError:
-    st.error("Module 'serpapi' niet gevonden. Voeg 'serpapi' toe aan je requirements.txt en installeer via `pip install serpapi`.")
-    st.stop()
-from authlib.integrations.requests_client import OAuth2Session
-import altair as alt
 
-# 1) Pagina-configuratie
+# Configuratie SerpAPI
+SERPAPI_KEY = "7ce7bed3558945953f44c95e367ac45a37725f91631e37858b0462715d72461b"
+
+@st.cache_data
+def zoek_website_bij_naam(locatienaam, plaats):
+    query = f"{locatienaam} {plaats} kinderopvang"
+    params = {"q": query, "api_key": SERPAPI_KEY, "engine": "google"}
+    try:
+        resp = requests.get("https://serpapi.com/search", params=params, timeout=10)
+        data = resp.json()
+        for res in data.get("organic_results", []):
+            if "link" in res:
+                return res["link"]
+    except:
+        return None
+    return None
+
+@st.cache_data
+def scrape_contactgegevens(url):
+    try:
+        resp = requests.get(url, timeout=10)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        tekst = soup.get_text()
+        emails = set(re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", tekst))
+        managers = [p.get_text().strip() for p in soup.find_all("p") if "locatiemanager" in p.get_text().lower()]
+        return {"emails": list(emails), "managers": managers}
+    except Exception as e:
+        return {"error": str(e)}
+
+# Streamlit UI
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 st.title("Kinderopvang Locatiemanager Scraper")
 
-# 2) Login keuze: Google OAuth of Admin
-login_method = st.selectbox(
-    "Login via:", ["Google OAuth", "Admin"]
-)
+uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+    st.write("### Ingelezen data", df.head())
 
-authenticated = False
+    if st.button("Start scraping"):
+        resultaten = []
+        progress = st.progress(0)
+        for idx, row in df.iterrows():
+            naam, plaats = str(row['locatienaam']), str(row['plaats'])
+            website = zoek_website_bij_naam(naam, plaats)
+            time.sleep(1)
+            data = scrape_contactgegevens(website) if website else {}
+            resultaten.append({
+                'locatienaam': naam,
+                'plaats': plaats,
+                'website': website,
+                'emails': ", ".join(data.get('emails', [])),
+                'managers': " | ".join(data.get('managers', [])),
+                'error': data.get('error', '')
+            })
+            progress.progress((idx+1)/len(df))
 
-if login_method == "Google OAuth":
-    # Google OAuth setup
-    CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID", "")
-    CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET", "")
-    REDIRECT_URI = st.secrets.get("REDIRECT_URI", "")
-    oauth = OAuth2Session(
-        client_id=CLIENT_ID,
-        client_secret=CLIENT_SECRET,
-        scope="openid email profile",
-        redirect_uri=REDIRECT_URI,
-    )
-    if "code" not in st.experimental_get_query_params():
-        auth_url, state = oauth.create_authorization_url(
-            "https://accounts.google.com/o/oauth2/auth"
-        )
-        st.session_state["oauth_state"] = state
-        st.markdown(f"[Log in met Google]({auth_url})")
-        st.stop()
-    else:
-        code = st.experimental_get_query_params()["code"][0]
-        token = oauth.fetch_token(
-            "https://oauth2.googleapis.com/token",
-            code=code,
-        )
-        userinfo = oauth.get(
-            "https://openidconnect.googleapis.com/v1/userinfo"
-        ).json()
-        st.success(f"Ingelogd als {userinfo['email']}")
-        authenticated = True
-
-elif login_method == "Admin":
-    # Admin login credentials uit secrets
-    admin_user = st.secrets.get("ADMIN_USER", "")
-    admin_pass = st.secrets.get("ADMIN_PASS", "")
-    user = st.text_input("Admin gebruikersnaam")
-    pwd = st.text_input("Wachtwoord", type="password")
-    if st.button("Login als Admin"):
-        if user == admin_user and pwd == admin_pass:
-            st.success("Admin ingelogd")
-            authenticated = True
-        else:
-            st.error("Onjuiste gebruikersnaam of wachtwoord")
-            st.stop()
-
-# Stop als niet geauthenticeerd
-if not authenticated:
-    st.stop()
-
-# 3) SerpAPI Key beheer
-SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
-if not SERPAPI_KEY:
-    key = st.text_input("SerpAPI Key", type="password")
-    if key:
-        SERPAPI_KEY = key
-        st.session_state["SERPAPI_KEY"] = key
-elif "SERPAPI_KEY" in st.session_state:
-    SERPAPI_KEY = st.session_state["SERPAPI_KEY"]
-
-# 4) Zoek- en scrape-functies (met caching)
-@st.cache_data
-def zoek_website(locatienaam: str, plaats: str) -> str | None:
-    params = {
-        "engine": "google",
-        "q": f"{locatienaam} {plaats} kinderopvang",
-        "api_key": SERPAPI_KEY,
-        "num": 1,
-    }
-    try:
-        resp = GoogleSearch(params).get_dict()
-        return resp.get("organic_results", [])[0].get("link")
-    except Exception:
-        return None
-
-@st.cache_data
-def scrape_page(url: str) -> dict:
-    result = {"emails": [], "telefoons": [], "adressen": [], "managers": [], "error": ""}
-    try:
-        r = requests.get(url, timeout=10); r.raise_for_status(); content = r.text
-        if not re.search(r"[@0-9]", content):
-            with sync_playwright() as p:
-                b = p.chromium.launch(headless=True)
-                pg = b.new_page(); pg.goto(url, timeout=15000)
-                content = pg.content(); b.close()
-        soup = BeautifulSoup(content, "html.parser"); text = soup.get_text(separator="\n")
-        result["emails"] = re.findall(r"[\w\.-]+@[\w\.-]+", text)
-        result["telefoons"] = [
-            phonenumbers.format_number(m.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
-            for m in phonenumbers.PhoneNumberMatcher(text, "NL")
-        ]
-        result["adressen"] = list({
-            tag.get_text(strip=True)
-            for tag in soup.find_all(["address","p","span","div"])
-            if re.search(r"\b[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+", tag.get_text())
-        })
-        result["managers"] = [
-            line.strip() for line in text.split("\n")
-            if re.search(r"\blocatiemanager\b", line, flags=re.IGNORECASE)
-        ]
-    except Exception as e:
-        result["error"] = str(e)
-    return result
-
-# 5) UI: modus keuze (bulk of handmatig)
-mode = st.radio("Invoermodus:", ["Bulk upload", "Handmatige invoer"])
-input_df = pd.DataFrame()
-if mode == "Bulk upload":
-    file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
-    if file: input_df = pd.read_excel(file)
-elif mode == "Handmatige invoer":
-    naam = st.text_input("Locatienaam"); plaats = st.text_input("Plaats")
-    if st.button("Voeg toe"): input_df = input_df.append({"locatienaam":naam,"plaats":plaats}, ignore_index=True)
-
-# 6) Filters & export-opties
-with st.expander("Filters & Export-opties"):
-    no_manager = st.checkbox("Alleen locaties zonder manager")
-    provincie = st.selectbox("Filter provincie:", ["", "Drenthe","Flevoland","Friesland","Gelderland","Groningen","Limburg","Noord-Brabant","Noord-Holland","Overijssel","Utrecht","Zeeland","Zuid-Holland"])
-    export_csv = st.checkbox("CSV export")
-    export_pdf = st.checkbox("PDF report")
-
-# 7) Start scraping
-if st.button("Start scraping") and not input_df.empty:
-    results = []; errors = []; progress = st.progress(0); status=st.empty()
-    for i, row in input_df.iterrows():
-        status.text(f"Verwerk {i+1}/{len(input_df)}: {row['locatienaam']}")
-        site = zoek_website(row['locatienaam'],row['plaats']); time.sleep(1)
-        data = scrape_page(site) if site else {'error':'Geen website'}
-        results.append({**row.to_dict(), **data, 'website':site})
-        if data['error']: errors.append({'locatie':row['locatienaam'],'error':data['error']})
-        progress.progress((i+1)/len(input_df))
-    df_res = pd.DataFrame(results)
-    if no_manager: df_res = df_res[df_res['managers'].map(len)==0]
-    if provincie: df_res = df_res[df_res['plaats']==provincie]
-    st.header("Dashboard & Statistieken")
-    st.metric("Totaal locaties", len(results))
-    succes=df_res['error'].eq('').sum(); st.metric("Succespercentage", f"{succes}/{len(results)}")
-    chart=alt.Chart(pd.DataFrame({'idx':range(len(df_res)),'ok':df_res['error'].eq('').astype(int)})).mark_line().encode(x='idx',y='ok')
-    st.altair_chart(chart, use_container_width=True)
-    buf=BytesIO(); df_res.to_excel(buf,index=False); buf.seek(0)
-    st.download_button("Download XLSX",buf,file_name=f"res-{datetime.now().strftime('%Y%m%d-%H%M')}.xlsx")
-    if export_csv: st.download_button("Download CSV", df_res.to_csv(index=False).encode('utf-8'),file_name='res.csv')
-    if export_pdf: st.info("PDF-export in ontwikkeling")
-    st.subheader("Resultaten")
-    st.dataframe(df_res)
-    if errors: st.warning("Fouten:" ), st.table(pd.DataFrame(errors))
+        res_df = pd.DataFrame(resultaten)
+        nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
+        fname = f"locatiemanager-gegevens-{nu}.xlsx"
+        buf = BytesIO()
+        res_df.to_excel(buf, index=False)
+        buf.seek(0)
+        st.download_button("Download resultaten", data=buf,
+                           file_name=fname,
+                           mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

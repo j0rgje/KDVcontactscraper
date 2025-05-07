@@ -124,30 +124,51 @@ with st.sidebar:
 
 # Scraper UI
 st.title("Kinderopvang Locatiemanager Scraper")
-uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
-if uploaded_file:
-    df = pd.read_excel(uploaded_file)
-    st.write("### Ingelezen data", df.head())
-    if st.button("Start scraping"):
-        resultaten = []
-        progress = st.progress(0)
-        for idx, row in df.iterrows():
-            naam, plaats = str(row['locatienaam']), str(row['plaats'])
-            site = zoek_website_bij_naam(naam, plaats)
-            time.sleep(1)
-            data = scrape_contactgegevens(site) if site else {}
-            resultaten.append({
-                'locatienaam': naam,
-                'plaats': plaats,
-                'website': site,
-                'emails': ", ".join(data.get('emails', [])),
-                'managers': " | ".join(data.get('managers', [])),
-                'error': data.get('error', '')
-            })
-            progress.progress((idx+1)/len(df))
-        res_df = pd.DataFrame(resultaten)
-        nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
-        buf = BytesIO(); res_df.to_excel(buf, index=False); buf.seek(0)
-        st.download_button("Download resultaten", data=buf,
-                           file_name=f"locatiemanager-gegevens-{nu}.xlsx",
-                           mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+# Modus-keuze: Bestand upload of Handmatige invoer
+mode = st.radio("Invoermodus:", ["Bestand upload", "Handmatige invoer"])
+input_df = pd.DataFrame()
+if mode == "Bestand upload":
+    uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+    if uploaded_file:
+        input_df = pd.read_excel(uploaded_file)
+        st.write("### Ingelezen data", input_df.head())
+elif mode == "Handmatige invoer":
+    # Bewaar rijen in sessie
+    if "manual_rows" not in st.session_state:
+        st.session_state.manual_rows = []
+    naam = st.text_input("Locatienaam")
+    plaats = st.text_input("Plaats")
+    if st.button("Voeg toe"):
+        if naam and plaats:
+            st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
+        else:
+            st.warning("Vul zowel locatienaam als plaats in.")
+    if st.session_state.manual_rows:
+        input_df = pd.DataFrame(st.session_state.manual_rows)
+        st.write("### Handmatige invoer", input_df)
+
+# Start scraping
+if not input_df.empty and st.button("Start scraping"):
+    resultaten = []
+    progress = st.progress(0)
+    for idx, row in input_df.iterrows():
+        naam, plaats = str(row['locatienaam']), str(row['plaats'])
+        site = zoek_website_bij_naam(naam, plaats)
+        time.sleep(1)
+        data = scrape_contactgegevens(site) if site else {}
+        resultaten.append({
+            'locatienaam': naam,
+            'plaats': plaats,
+            'website': site,
+            'emails': ", ".join(data.get('emails', [])),
+            'managers': " | ".join(data.get('managers', [])),
+            'error': data.get('error', '')
+        })
+        progress.progress((idx+1)/len(input_df))
+    res_df = pd.DataFrame(resultaten)
+    nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
+    buf = BytesIO(); res_df.to_excel(buf, index=False); buf.seek(0)
+    st.download_button("Download resultaten", data=buf,
+                       file_name=f"locatiemanager-gegevens-{nu}.xlsx",
+                       mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

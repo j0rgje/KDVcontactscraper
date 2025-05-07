@@ -8,58 +8,60 @@ from datetime import datetime
 from io import BytesIO
 from supabase import create_client
 
+# Page config must be first Streamlit command
+st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
+
 # Init Supabase client using env vars
 SUPABASE_URL = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Ensure session_state keys for user session
+# Initialize session state
 if "session" not in st.session_state:
     st.session_state.session = None
 if "user" not in st.session_state:
     st.session_state.user = None
 
 # Authentication flow
-if not st.session_state.session:
+if st.session_state.session is None:
     action = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
-
     if action == "Registreren":
         st.title("Nieuw account aanmaken")
         with st.form("signup_form"):
-            email = st.text_input("E-mail (wordt je gebruikersnaam)")
+            email = st.text_input("E-mail (gebruikersnaam)")
             password = st.text_input("Wachtwoord", type="password")
-            signup_click = st.form_submit_button("Registreren")
-        if signup_click:
+            submit = st.form_submit_button("Account aanmaken")
+        if submit:
             res = supabase.auth.sign_up({"email": email, "password": password})
-            err = getattr(res, "error", None)
+            err = getattr(res, 'error', None)
             if err:
                 st.error(f"Registratie mislukt: {err.message}")
             else:
                 st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
         st.stop()
+    else:
+        st.title("Login")
+        with st.form("login_form"):
+            email = st.text_input("E-mail")
+            password = st.text_input("Wachtwoord", type="password")
+            submit = st.form_submit_button("Inloggen")
+        if submit:
+            res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            err = getattr(res, 'error', None)
+            session = getattr(res, 'session', None)
+            user = getattr(res, 'user', None)
+            if err:
+                st.error(f"Inloggen mislukt: {err.message}")
+            elif session is None:
+                st.error("Inloggen mislukt: geen geldige sessie ontvangen. Heb je je e-mail bevestigd?")
+            else:
+                st.session_state.session = session
+                st.session_state.user = {"email": user.email, "id": user.id} if user else None
+        # After handling submit, if still not logged in, stop
+        if st.session_state.session is None:
+            st.stop()
 
-    # Login form
-    st.title("Login")
-    with st.form("login_form"):
-        email = st.text_input("E-mail")
-        password = st.text_input("Wachtwoord", type="password")
-        login_click = st.form_submit_button("Inloggen")
-    if login_click:
-        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-        err = getattr(res, "error", None)
-        session = getattr(res, "session", None)
-        user = getattr(res, "user", None)
-        if err:
-            st.error(f"Inloggen mislukt: {err.message}")
-        elif not session:
-            st.error("Inloggen mislukt: geen geldige sessie ontvangen. Heb je je e-mail bevestigd?")
-        else:
-            st.session_state.session = session
-            st.session_state.user = {"email": user.email, "id": user.id} if user else None
-            st.experimental_rerun()
-    st.stop()
-
-# User is now logged in
+# User is logged in at this point
 user_info = st.session_state.user or {}
 st.sidebar.write(f"Ingelogd als: {user_info.get('email', 'Onbekend')}")
 
@@ -94,9 +96,7 @@ def scrape_contactgegevens(url):
         return {"error": str(e)}
 
 # Main UI
-st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 st.title("Kinderopvang Locatiemanager Scraper")
-
 uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
@@ -106,13 +106,13 @@ if uploaded_file:
         progress = st.progress(0)
         for idx, row in df.iterrows():
             naam, plaats = str(row['locatienaam']), str(row['plaats'])
-            website = zoek_website_bij_naam(naam, plaats)
+            site = zoek_website_bij_naam(naam, plaats)
             time.sleep(1)
-            data = scrape_contactgegevens(website) if website else {}
+            data = scrape_contactgegevens(site) if site else {}
             resultaten.append({
                 'locatienaam': naam,
                 'plaats': plaats,
-                'website': website,
+                'website': site,
                 'emails': ", ".join(data.get('emails', [])),
                 'managers': " | ".join(data.get('managers', [])),
                 'error': data.get('error', '')
@@ -120,9 +120,7 @@ if uploaded_file:
             progress.progress((idx+1)/len(df))
         res_df = pd.DataFrame(resultaten)
         nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
-        buf = BytesIO()
-        res_df.to_excel(buf, index=False)
-        buf.seek(0)
+        buf = BytesIO(); res_df.to_excel(buf, index=False); buf.seek(0)
         st.download_button("Download resultaten", data=buf,
                            file_name=f"locatiemanager-gegevens-{nu}.xlsx",
                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

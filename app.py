@@ -166,9 +166,14 @@ if not input_df.empty and st.button("Start scraping"):
             'error': data.get('error', '')
         })
         progress.progress((idx+1)/len(input_df))
+    # Resultaten in DataFrame
     res_df = pd.DataFrame(resultaten)
+    st.subheader("Resultaten")
+    st.dataframe(res_df)
     nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
-    buf = BytesIO(); res_df.to_excel(buf, index=False); buf.seek(0)
+    buf = BytesIO()
+    res_df.to_excel(buf, index=False)
+    buf.seek(0)
     st.download_button("Download resultaten", data=buf,
                        file_name=f"locatiemanager-gegevens-{nu}.xlsx",
                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

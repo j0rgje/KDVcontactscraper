@@ -7,15 +7,9 @@ import time
 from datetime import datetime
 from io import BytesIO
 from supabase import create_client
-import streamlit.components.v1 as components  # for JS reload
 
-# Page config must be first Streamlit command
+# Page config first
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
-
-# Init Supabase client using env vars
-SUPABASE_URL = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Initialize session state
 if "session" not in st.session_state:
@@ -23,71 +17,64 @@ if "session" not in st.session_state:
 if "user" not in st.session_state:
     st.session_state.user = None
 
-# Authentication flow
+# Initialize Supabase
+SUPABASE_URL = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Authentication
 if st.session_state.session is None:
+    # Choose action
     action = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
 
     if action == "Registreren":
         st.title("Nieuw account aanmaken")
-        with st.form("signup_form"):
+        with st.form("signup_form"):  # signup form
             email = st.text_input("E-mail (gebruikersnaam)")
             password = st.text_input("Wachtwoord", type="password")
-            submit = st.form_submit_button("Account aanmaken")
-        if submit:
+            signup = st.form_submit_button("Account aanmaken")
+        if signup:
             res = supabase.auth.sign_up({"email": email, "password": password})
             err = getattr(res, 'error', None)
             if err:
                 st.error(f"Registratie mislukt: {err.message}")
             else:
                 st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
-        # Stop execution to stay on auth screen
         st.stop()
 
-    # Login
+    # Login form
     st.title("Login")
     with st.form("login_form"):
         email = st.text_input("E-mail")
         password = st.text_input("Wachtwoord", type="password")
-        submit = st.form_submit_button("Inloggen")
-    if submit:
+        login = st.form_submit_button("Inloggen")
+    if login:
         res = supabase.auth.sign_in_with_password({"email": email, "password": password})
         err = getattr(res, 'error', None)
         session = getattr(res, 'session', None)
         user = getattr(res, 'user', None)
         if err:
             st.error(f"Inloggen mislukt: {err.message}")
-        elif session:
-            st.session_state.session = session
-            st.session_state.user = {"email": user.email, "id": user.id} if user else None
-            # Reload page via JS to re-render UI
-            components.html("<script>window.location.reload();</script>")
-            st.stop()
-            st.session_state.session = session
-            st.session_state.user = {"email": user.email, "id": user.id} if user else None
-            # After setting session, rerun to show main UI only
-            try:
-                st.experimental_rerun()
-            except Exception:
-                pass
-        else:
+        elif session is None:
             st.error("Inloggen mislukt: geen geldige sessie ontvangen. Heb je je e-mail bevestigd?")
-    # If still not logged in, stop to show auth UI
+        else:
+            # set session and user, will skip stop below
+            st.session_state.session = session
+            st.session_state.user = {"email": user.email, "id": user.id} if user else None
+    # if still not logged in, prevent showing main UI
     if st.session_state.session is None:
         st.stop()
 
-# Main UI: user is logged in
+# Main UI
+# Sidebar user info and logout
 user_info = st.session_state.user or {}
 st.sidebar.write(f"Ingelogd als: {user_info.get('email', 'Onbekend')}")
-
-# Logout button
 if st.sidebar.button("Log uit"):
     st.session_state.session = None
     st.session_state.user = None
-    # Reload page via JS
-    components.html("<script>window.location.reload();</script>")
-    st.stop()
+    st.experimental_rerun()
 
-# SerpAPI-key uit secrets
+# SerpAPI-key
 SERPAPI_KEY = st.secrets["SERPAPI_KEY"]
 
 @st.cache_data
@@ -117,7 +104,7 @@ def scrape_contactgegevens(url):
     except Exception as e:
         return {"error": str(e)}
 
-# Main scraping UI
+# Scraper UI
 st.title("Kinderopvang Locatiemanager Scraper")
 uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 if uploaded_file:

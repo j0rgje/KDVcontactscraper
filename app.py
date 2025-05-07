@@ -13,53 +13,52 @@ SUPABASE_URL = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Sessie state voor authenticatie
+# Ensure session_state key for user session
 if "session" not in st.session_state:
     st.session_state.session = None
 
-# Actie: inloggen of registreren
+# If not logged in, show auth options
 if not st.session_state.session:
-    actie = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
+    action = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
 
-    if actie == "Registreren":
+    if action == "Registreren":
         st.title("Nieuw account aanmaken")
-        with st.form(key="signup_form"):
+        with st.form("signup_form"):
             email = st.text_input("E-mail (wordt je gebruikersnaam)")
             password = st.text_input("Wachtwoord", type="password")
-            signup = st.form_submit_button("Registreren")
-        if signup:
-            # Registratie via Supabase Auth
-            response = supabase.auth.sign_up({"email": email, "password": password})
-            error = getattr(response, 'error', None)
-            if error:
-                # API-fout
-                st.error(f"Registratie mislukt: {error.message}")
+            signup_click = st.form_submit_button("Registreren")
+        if signup_click:
+            # Supabase v2 sign_up with keyword args
+            res = supabase.auth.sign_up(email=email, password=password)
+            if getattr(res, 'error', None):
+                st.error(f"Registratie mislukt: {res.error.message}")
             else:
-                st.success("Registratie gelukt! Controleer je e-mail voor verificatie.")
+                st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
         st.stop()
 
-    else:
-        st.title("Login")
-        with st.form(key="login_form"):
-            email = st.text_input("E-mail")
-            password = st.text_input("Wachtwoord", type="password")
-            login = st.form_submit_button("Inloggen")
-        if login:
-            # Login via Supabase Auth
-            response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-            error = getattr(response, 'error', None)
-            session = getattr(response, 'session', None)
-            if error:
-                st.error(f"Inloggen mislukt: {error.message}")
-            elif not session:
-                st.error("Inloggen mislukt: geen sessie ontvangen. Controleer e-mailbevestiging.")
-            else:
-                # Sla sessie op
-                st.session_state.session = session
-                st.experimental_rerun()
-        st.stop()
+    # Login form
+    st.title("Login")
+    with st.form("login_form"):
+        email = st.text_input("E-mail")
+        password = st.text_input("Wachtwoord", type="password")
+        login_click = st.form_submit_button("Inloggen")
+    if login_click:
+        # Supabase v2 login
+        res = supabase.auth.sign_in_with_password(email=email, password=password)
+        # res.data is a SessionResponse
+        session = getattr(res.data, 'session', None)
+        err = getattr(res, 'error', None)
+        if err:
+            st.error(f"Inloggen mislukt: {err.message}")
+        elif not session:
+            st.error("Inloggen mislukt: geen sessie ontvangen. Heb je je e-mail bevestigd?")
+        else:
+            # Save session and rerun
+            st.session_state.session = session
+            st.experimental_rerun()
+    st.stop()
 
-# Na inloggen
+# User is now logged in
 session = st.session_state.session
 user_email = session.user.email if hasattr(session, 'user') else 'Onbekend'
 st.sidebar.write(f"Ingelogd als: {user_email}")
@@ -75,8 +74,9 @@ def zoek_website_bij_naam(locatienaam, plaats):
         resp = requests.get("https://serpapi.com/search", params=params, timeout=10)
         data = resp.json()
         for item in data.get("organic_results", []):
-            if "link" in item:
-                return item["link"]
+            link = item.get("link")
+            if link:
+                return link
     except Exception:
         return None
     return None
@@ -93,7 +93,7 @@ def scrape_contactgegevens(url):
     except Exception as e:
         return {"error": str(e)}
 
-# Streamlit UI
+# Main UI
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 st.title("Kinderopvang Locatiemanager Scraper")
 

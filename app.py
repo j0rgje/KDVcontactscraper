@@ -6,9 +6,27 @@ import re
 import time
 from datetime import datetime
 from io import BytesIO
+import json
+import os
 
-# Haal gebruikers en SerpAPI-key uit Streamlit Secrets
-USERS = st.secrets.get("users", {})  # dict: {"user1": "pass1", ...}
+# Bestand om gebruikers op te slaan
+USERS_FILE = "users.json"
+
+# Functie om gebruikers te laden
+def load_users():
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+# Functie om een nieuwe gebruiker op te slaan
+def save_user(username, password):
+    users = load_users()
+    users[username] = password
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f)
+
+# SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
 
 # Sessie state voor authenticatie
@@ -20,21 +38,20 @@ actie = None
 if not st.session_state.authenticated:
     actie = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Account aanmaken"] )
 
+# Account aanmaken
 if not st.session_state.authenticated and actie == "Account aanmaken":
     st.title("Nieuw account aanmaken")
     with st.form(key="signup_form"):
         new_user = st.text_input("Kies een gebruikersnaam")
         new_pass = st.text_input("Kies een wachtwoord", type="password")
-        signup = st.form_submit_button("Account genereren")
+        signup = st.form_submit_button("Account aanmaken")
     if signup:
-        if new_user in USERS:
+        users = load_users()
+        if new_user in users:
             st.error("Deze gebruikersnaam bestaat al.")
         else:
-            st.success("Account klaargezet!")
-            st.markdown(
-                "Kopieer de volgende regel en plak in je `.streamlit/secrets.toml` onder `[users]`:"
-            )
-            st.code(f"{new_user} = \"{new_pass}\"", language="toml")
+            save_user(new_user, new_pass)
+            st.success("Account succesvol aangemaakt! Je kunt nu inloggen.")
     st.stop()
 
 # Login scherm
@@ -45,7 +62,8 @@ if not st.session_state.authenticated:
         input_pass = st.text_input("Wachtwoord", type="password")
         submit = st.form_submit_button("Inloggen")
     if submit:
-        if input_user in USERS and input_pass == USERS[input_user]:
+        users = load_users()
+        if input_user in users and input_pass == users[input_user]:
             st.session_state.authenticated = True
             st.experimental_rerun()
         else:
@@ -53,8 +71,6 @@ if not st.session_state.authenticated:
     st.stop()
 
 # Vanaf hier is de gebruiker ingelogd
-# Configuratie SerpAPI zoek- en scrape-functies
-@st.cache_data
 def zoek_website_bij_naam(locatienaam, plaats):
     query = f"{locatienaam} {plaats} kinderopvang"
     params = {"q": query, "api_key": SERPAPI_KEY, "engine": "google"}

@@ -17,7 +17,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 if "session" not in st.session_state:
     st.session_state.session = None
 
-# If not logged in, show auth options
+# Authentication flow
 if not st.session_state.session:
     action = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
 
@@ -28,10 +28,11 @@ if not st.session_state.session:
             password = st.text_input("Wachtwoord", type="password")
             signup_click = st.form_submit_button("Registreren")
         if signup_click:
-            # Supabase v2 sign_up with keyword args
-            res = supabase.auth.sign_up(email=email, password=password)
-            if getattr(res, 'error', None):
-                st.error(f"Registratie mislukt: {res.error.message}")
+            # Supabase v2 sign_up expects dict argument
+            res = supabase.auth.sign_up({"email": email, "password": password})
+            err = getattr(res, 'error', None)
+            if err:
+                st.error(f"Registratie mislukt: {err.message}")
             else:
                 st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
         st.stop()
@@ -43,28 +44,30 @@ if not st.session_state.session:
         password = st.text_input("Wachtwoord", type="password")
         login_click = st.form_submit_button("Inloggen")
     if login_click:
-        # Supabase v2 login
-        res = supabase.auth.sign_in_with_password(email=email, password=password)
-        # res.data is a SessionResponse
-        session = getattr(res.data, 'session', None)
+        # Supabase v2 sign_in_with_password expects dict argument
+        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
         err = getattr(res, 'error', None)
+        # session and user available in res.data
+        data = getattr(res, 'data', None) or {}
+        session = data.get('session')
+        user = data.get('user')
         if err:
             st.error(f"Inloggen mislukt: {err.message}")
-        elif not session:
+        elif not session or not user:
             st.error("Inloggen mislukt: geen sessie ontvangen. Heb je je e-mail bevestigd?")
         else:
-            # Save session and rerun
             st.session_state.session = session
             st.experimental_rerun()
     st.stop()
 
 # User is now logged in
 session = st.session_state.session
-user_email = session.user.email if hasattr(session, 'user') else 'Onbekend'
+# session.user is available
+user_email = session.user.email if hasattr(session, 'user') else session.get('user', {}).get('email', 'Onbekend')
 st.sidebar.write(f"Ingelogd als: {user_email}")
 
 # SerpAPI-key uit secrets
-SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
+SERPAPI_KEY = st.secrets["SERPAPI_KEY"]
 
 @st.cache_data
 def zoek_website_bij_naam(locatienaam, plaats):
@@ -74,8 +77,7 @@ def zoek_website_bij_naam(locatienaam, plaats):
         resp = requests.get("https://serpapi.com/search", params=params, timeout=10)
         data = resp.json()
         for item in data.get("organic_results", []):
-            link = item.get("link")
-            if link:
+            if (link := item.get("link")):
                 return link
     except Exception:
         return None
@@ -120,10 +122,9 @@ if uploaded_file:
             progress.progress((idx+1)/len(df))
         res_df = pd.DataFrame(resultaten)
         nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
-        fname = f"locatiemanager-gegevens-{nu}.xlsx"
         buf = BytesIO()
         res_df.to_excel(buf, index=False)
         buf.seek(0)
         st.download_button("Download resultaten", data=buf,
-                           file_name=fname,
+                           file_name=f"locatiemanager-gegevens-{nu}.xlsx",
                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

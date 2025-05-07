@@ -9,7 +9,7 @@ from io import BytesIO
 import phonenumbers
 
 # Configuratie SerpAPI
-SERPAPI_KEY = "7ce7bed3558945953f44c95e367ac45a37725f91631e37858b0462715d72461b"
+SERPAPI_KEY = st.secrets["SERPAPI_KEY"]
 
 @st.cache_data
 def zoek_website_bij_naam(locatienaam, plaats):

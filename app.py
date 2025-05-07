@@ -29,10 +29,10 @@ if not st.session_state.session:
             password = st.text_input("Wachtwoord", type="password")
             signup_click = st.form_submit_button("Registreren")
         if signup_click:
+            # Supabase sign_up: pass a dict
             res = supabase.auth.sign_up({"email": email, "password": password})
-            error = res.get('error')
-            if error:
-                st.error(f"Registratie mislukt: {error['message']}")
+            if getattr(res, 'error', None):
+                st.error(f"Registratie mislukt: {res.error.message}")
             else:
                 st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
         st.stop()
@@ -44,19 +44,21 @@ if not st.session_state.session:
         password = st.text_input("Wachtwoord", type="password")
         login_click = st.form_submit_button("Inloggen")
     if login_click:
+        # Supabase sign_in_with_password: pass a dict
         res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-        error = res.get('error')
-        data = res.get('data', {}) or {}
-        session = data.get('session')
-        user = data.get('user')
-        if error:
-            st.error(f"Inloggen mislukt: {error['message']}")
-        elif not session or not user:
-            st.error("Inloggen mislukt: geen sessie ontvangen. Heb je je e-mail bevestigd?")
-        else:
-            st.session_state.session = session
-            st.session_state.user = user
-            st.experimental_rerun()
+        # Check for error
+        if getattr(res, 'error', None):
+            st.error(f"Inloggen mislukt: {res.error.message}")
+            st.stop()
+        # Extract data
+        data = getattr(res, 'data', None)
+        if not data or not getattr(data, 'session', None) or not getattr(data, 'user', None):
+            st.error("Inloggen mislukt: geen geldige sessie ontvangen. Heb je je e-mail bevestigd?")
+            st.stop()
+        # Save session and user
+        st.session_state.session = data.session
+        st.session_state.user = {"email": data.user.email, "id": data.user.id}
+        st.experimental_rerun()
     st.stop()
 
 # User is now logged in

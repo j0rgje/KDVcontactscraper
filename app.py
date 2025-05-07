@@ -8,12 +8,17 @@ import time
 from datetime import datetime
 from io import BytesIO
 import phonenumbers
-from duckduckgo_search import ddg
 from playwright.sync_api import sync_playwright
 
 # Zet page config vóór alle andere Streamlit-commando's
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 st.title("Kinderopvang Locatiemanager Scraper (Gratis zoekmethode)")
+
+try:
+    from duckduckgo_search import ddg
+except ImportError:
+    st.error("Module 'duckduckgo_search' niet gevonden. Installeer met: pip install duckduckgo_search")
+    st.stop()
 
 # Caching-wrapper voor performance
 @st.cache_data

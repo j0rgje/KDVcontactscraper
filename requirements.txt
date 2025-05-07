@@ -3,6 +3,8 @@ pandas
 openpyxl
 requests
 beautifulsoup4
-duckduckgo_search
 phonenumbers
 playwright
+serpapi
+authlib
+altair

@@ -58,6 +58,11 @@ if st.session_state.session is None:
         elif session:
             st.session_state.session = session
             st.session_state.user = {"email": user.email, "id": user.id} if user else None
+            # After setting session, rerun to show main UI only
+            try:
+                st.experimental_rerun()
+            except Exception:
+                pass
         else:
             st.error("Inloggen mislukt: geen geldige sessie ontvangen. Heb je je e-mail bevestigd?")
     # If still not logged in, stop to show auth UI

@@ -55,23 +55,21 @@ if st.session_state.session is None:
             elif session is None:
                 st.error("Inloggen mislukt: geen geldige sessie ontvangen. Heb je je e-mail bevestigd?")
             else:
+                # Successful login: set state and rerun to render main UI
                 st.session_state.session = session
                 st.session_state.user = {"email": user.email, "id": user.id} if user else None
-        # After handling submit, if still not logged in, stop
-        if st.session_state.session is None:
-            st.stop()
+                st.experimental_rerun()
+        st.stop()
 
-# User is logged in at this point
+# Main UI: user is logged in
 user_info = st.session_state.user or {}
 st.sidebar.write(f"Ingelogd als: {user_info.get('email', 'Onbekend')}")
+
 # Logout button
 if st.sidebar.button("Log uit"):
     st.session_state.session = None
     st.session_state.user = None
-    try:
-        st.experimental_rerun()
-    except AttributeError:
-        st.sidebar.info("Ververs de pagina om uit te loggen.")
+    st.experimental_rerun()
 
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets["SERPAPI_KEY"]
@@ -103,7 +101,7 @@ def scrape_contactgegevens(url):
     except Exception as e:
         return {"error": str(e)}
 
-# Main UI
+# Main scraping UI
 st.title("Kinderopvang Locatiemanager Scraper")
 uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 if uploaded_file:

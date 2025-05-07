@@ -8,3 +8,4 @@ playwright
 serpapi
 authlib
 altair
+supabase

@@ -55,9 +55,9 @@ if login_method == "Google OAuth":
         authenticated = True
 
 elif login_method == "Admin":
-    # Admin login credentials
-    admin_user = "JornBrem"
-    admin_pass = "ewfpoiWF14rq"
+    # Admin login credentials uit secrets
+    admin_user = st.secrets.get("ADMIN_USER", "")
+    admin_pass = st.secrets.get("ADMIN_PASS", "")
     user = st.text_input("Admin gebruikersnaam")
     pwd = st.text_input("Wachtwoord", type="password")
     if st.button("Login als Admin"):
@@ -67,7 +67,7 @@ elif login_method == "Admin":
         else:
             st.error("Onjuiste gebruikersnaam of wachtwoord")
             st.stop()
-
+            
 # Stop als niet geauthenticeerd
 if not authenticated:
     st.stop()

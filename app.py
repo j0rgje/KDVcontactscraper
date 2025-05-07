@@ -6,71 +6,57 @@ import re
 import time
 from datetime import datetime
 from io import BytesIO
-import json
-import os
+from supabase import create_client
 
-# Bestand om gebruikers op te slaan
-USERS_FILE = "users.json"
-
-# Functie om gebruikers te laden
-def load_users():
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-# Functie om een nieuwe gebruiker op te slaan
-def save_user(username, password):
-    users = load_users()
-    users[username] = password
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f)
-
-# SerpAPI-key uit secrets
-SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
+# Init Supabase client
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Sessie state voor authenticatie
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+if "session" not in st.session_state:
+    st.session_state.session = None
 
-# Actie selectie: inloggen of account aanmaken
-actie = None
-if not st.session_state.authenticated:
-    actie = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Account aanmaken"] )
-
-# Account aanmaken
-if not st.session_state.authenticated and actie == "Account aanmaken":
-    st.title("Nieuw account aanmaken")
-    with st.form(key="signup_form"):
-        new_user = st.text_input("Kies een gebruikersnaam")
-        new_pass = st.text_input("Kies een wachtwoord", type="password")
-        signup = st.form_submit_button("Account aanmaken")
-    if signup:
-        users = load_users()
-        if new_user in users:
-            st.error("Deze gebruikersnaam bestaat al.")
-        else:
-            save_user(new_user, new_pass)
-            st.success("Account succesvol aangemaakt! Je kunt nu inloggen.")
-    st.stop()
-
-# Login scherm
-if not st.session_state.authenticated:
-    st.title("Login")
-    with st.form(key="login_form"):
-        input_user = st.text_input("Gebruikersnaam")
-        input_pass = st.text_input("Wachtwoord", type="password")
-        submit = st.form_submit_button("Inloggen")
-    if submit:
-        users = load_users()
-        if input_user in users and input_pass == users[input_user]:
-            st.session_state.authenticated = True
-            st.experimental_rerun()
-        else:
-            st.error("Onjuiste gebruikersnaam of wachtwoord.")
-    st.stop()
+# Keuze: inloggen of registreren
+if not st.session_state.session:
+    actie = st.sidebar.radio("Wat wil je doen?", ["Inloggen", "Registreren"])
+    if actie == "Registreren":
+        st.title("Nieuw account aanmaken")
+        with st.form(key="signup_form"):
+            email = st.text_input("E-mail (wordt je gebruikersnaam)")
+            password = st.text_input("Wachtwoord", type="password")
+            signup = st.form_submit_button("Registreren")
+        if signup:
+            res = supabase.auth.sign_up({"email": email, "password": password})
+            if res.get('error'):
+                st.error(f"Registratie mislukt: {res['error']['message']}")
+            else:
+                st.success("Registratie gelukt! Controleer je e-mail voor verificatie.")
+        st.stop()
+    else:
+        st.title("Login")
+        with st.form(key="login_form"):
+            email = st.text_input("E-mail")
+            password = st.text_input("Wachtwoord", type="password")
+            login = st.form_submit_button("Inloggen")
+        if login:
+            res = supabase.auth.sign_in({"email": email, "password": password})
+            if res.get('error') or not res.get('data'):
+                st.error("Onjuiste e-mail of wachtwoord.")
+            else:
+                st.session_state.session = res['data']
+                st.experimental_rerun()
+        st.stop()
 
 # Vanaf hier is de gebruiker ingelogd
+user_email = st.session_state.session['user']['email']
+st.sidebar.write(f"Ingelogd als: {user_email}")
+
+# SerpAPI-key uit secrets
+df = None
+SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
+
+@st.cache_data
 def zoek_website_bij_naam(locatienaam, plaats):
     query = f"{locatienaam} {plaats} kinderopvang"
     params = {"q": query, "api_key": SERPAPI_KEY, "engine": "google"}

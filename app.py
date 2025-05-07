@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 from io import BytesIO
 from supabase import create_client
+import streamlit.components.v1 as components  # for JS reload
 
 # Page config must be first Streamlit command
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
@@ -58,6 +59,11 @@ if st.session_state.session is None:
         elif session:
             st.session_state.session = session
             st.session_state.user = {"email": user.email, "id": user.id} if user else None
+            # Reload page via JS to re-render UI
+            components.html("<script>window.location.reload();</script>")
+            st.stop()
+            st.session_state.session = session
+            st.session_state.user = {"email": user.email, "id": user.id} if user else None
             # After setting session, rerun to show main UI only
             try:
                 st.experimental_rerun()
@@ -77,8 +83,9 @@ st.sidebar.write(f"Ingelogd als: {user_info.get('email', 'Onbekend')}")
 if st.sidebar.button("Log uit"):
     st.session_state.session = None
     st.session_state.user = None
-    # After state reset, rerun naturally
-    st.experimental_rerun()
+    # Reload page via JS
+    components.html("<script>window.location.reload();</script>")
+    st.stop()
 
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets["SERPAPI_KEY"]

@@ -1,7 +1,7 @@
 # Kinderopvang Locatiemanager Scraper
 
 Streamlit-webapp met:
-- Multi-user login: Google OAuth of Admin
+- Multi-user login via supabase
 - Bulk upload & handmatige invoer
 - SerpAPI-zoek, Playwright-fallback
 - Filters (geen manager, provincie)

@@ -7,22 +7,19 @@ import time
 from datetime import datetime
 from io import BytesIO
 from supabase import create_client
+import altair as alt
+import phonenumbers
 import streamlit.components.v1 as components  # for JS reload
 
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
 # Initialize session state
-if "session" not in st.session_state:
-    st.session_state.session = None
-if "user" not in st.session_state:
-    st.session_state.user = None
-if "login_error" not in st.session_state:
-    st.session_state.login_error = None
-if "signup_error" not in st.session_state:
-    st.session_state.signup_error = None
-if "signup_success" not in st.session_state:
-    st.session_state.signup_success = False
+for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows"]:
+    if key not in st.session_state:
+        st.session_state[key] = None if key != "signup_success" else False
+if st.session_state.manual_rows is None:
+    st.session_state.manual_rows = []
 
 # Supabase initialization
 SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -30,11 +27,9 @@ SUPABASE_KEY = st.secrets.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Authentication flow
-# Authentication flow
-if st.session_state.session is None:
+if not st.session_state.session:
     st.sidebar.title("Authenticatie")
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
-
     if action == "Inloggen":
         st.title("Login")
         with st.form("login_form"):  
@@ -51,7 +46,6 @@ if st.session_state.session is None:
             elif sess is None:
                 st.session_state.login_error = "Geen geldige sessie ontvangen. Heb je je e-mail bevestigd?"
             else:
-                # Successful login: set session and reload via JS
                 st.session_state.session = sess
                 st.session_state.user = {"email": user.email, "id": user.id} if user else None
                 st.session_state.login_error = None
@@ -59,7 +53,6 @@ if st.session_state.session is None:
         if st.session_state.login_error:
             st.error(st.session_state.login_error)
         st.stop()
-
     else:  # Registreren
         st.title("Nieuw account aanmaken")
         with st.form("signup_form"):  
@@ -74,7 +67,6 @@ if st.session_state.session is None:
             else:
                 st.session_state.signup_success = True
                 st.session_state.signup_error = None
-                # reload to show success
                 components.html("<script>window.location.href=window.location.href;</script>", height=0)
         if st.session_state.signup_error:
             st.error(st.session_state.signup_error)
@@ -82,9 +74,19 @@ if st.session_state.session is None:
             st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
         st.stop()
 
+# Main UI Sidebar Logout
+with st.sidebar:
+    user_email = st.session_state.user.get('email', 'Onbekend') if st.session_state.user else 'Onbekend'
+    st.write(f"Ingelogd als: {user_email}")
+    if st.button("Log uit"):
+        for key in ['session','user','login_error','signup_error','signup_success']:
+            st.session_state[key] = None
+        components.html("<script>window.location.reload();</script>", height=0)
+
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
 
+# Function to lookup website URL
 @st.cache_data
 def zoek_website_bij_naam(locatienaam, plaats):
     query = f"{locatienaam} {plaats} kinderopvang"
@@ -100,32 +102,34 @@ def zoek_website_bij_naam(locatienaam, plaats):
         return None
     return None
 
+# Enhanced scrape: emails, phones, addresses, managers
 @st.cache_data
 def scrape_contactgegevens(url):
+    result = {"emails": [], "telefoons": [], "adressen": [], "managers": [], "error": ""}
     try:
         resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
-        tekst = soup.get_text()
-        emails = set(re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", tekst))
-        managers = [p.get_text().strip() for p in soup.find_all("p") if "locatiemanager" in p.get_text().lower()]
-        return {"emails": list(emails), "managers": managers}
+        text = soup.get_text(separator="\n")
+        # Emails
+        result['emails'] = re.findall(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}", text)
+        # Phones
+        phones = []
+        for match in phonenumbers.PhoneNumberMatcher(text, "NL"):
+            phones.append(phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL))
+        result['telefoons'] = phones
+        # Addresses (straat + nummer, postcode)
+        addr_pattern = r"[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+|\d{4}\s?[A-Z]{2}"  # street+nr or Dutch postcode
+        result['adressen'] = re.findall(addr_pattern, text)
+        # Managers
+        result['managers'] = [line.strip() for line in text.split("\n") if re.search(r"locatiemanager", line, flags=re.IGNORECASE)]
     except Exception as e:
-        return {"error": str(e)}
-
-# Main UI Sidebar Logout
-with st.sidebar:
-    user_email = st.session_state.user.get('email', 'Onbekend') if st.session_state.user else 'Onbekend'
-    st.write(f"Ingelogd als: {user_email}")
-    if st.button("Log uit"):
-        # Reset session state and reload
-        for key in ['session','user','login_error','signup_error','signup_success']:
-            if key in st.session_state: st.session_state[key] = None
-        components.html("<script>window.location.reload();</script>", height=0)
+        result['error'] = str(e)
+    return result
 
 # Scraper UI
 st.title("Kinderopvang Locatiemanager Scraper")
-
-# Modus-keuze: Bestand upload of Handmatige invoer
+# Mode select
 mode = st.radio("Invoermodus:", ["Bestand upload", "Handmatige invoer"])
 input_df = pd.DataFrame()
 if mode == "Bestand upload":
@@ -134,9 +138,6 @@ if mode == "Bestand upload":
         input_df = pd.read_excel(uploaded_file)
         st.write("### Ingelezen data", input_df.head())
 elif mode == "Handmatige invoer":
-    # Bewaar rijen in sessie
-    if "manual_rows" not in st.session_state:
-        st.session_state.manual_rows = []
     naam = st.text_input("Locatienaam")
     plaats = st.text_input("Plaats")
     if st.button("Voeg toe"):
@@ -156,24 +157,45 @@ if not input_df.empty and st.button("Start scraping"):
         naam, plaats = str(row['locatienaam']), str(row['plaats'])
         site = zoek_website_bij_naam(naam, plaats)
         time.sleep(1)
-        data = scrape_contactgegevens(site) if site else {}
+        data = scrape_contactgegevens(site) if site else {'error': 'Geen website'}
         resultaten.append({
             'locatienaam': naam,
             'plaats': plaats,
             'website': site,
             'emails': ", ".join(data.get('emails', [])),
+            'telefoons': ", ".join(data.get('telefoons', [])),
+            'adressen': ", ".join(data.get('adressen', [])),
             'managers': " | ".join(data.get('managers', [])),
             'error': data.get('error', '')
         })
         progress.progress((idx+1)/len(input_df))
-    # Resultaten in DataFrame
+    # Show and export
     res_df = pd.DataFrame(resultaten)
     st.subheader("Resultaten")
     st.dataframe(res_df)
+    # Export
     nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
-    buf = BytesIO()
-    res_df.to_excel(buf, index=False)
-    buf.seek(0)
-    st.download_button("Download resultaten", data=buf,
+    buf_xlsx = BytesIO(); res_df.to_excel(buf_xlsx, index=False); buf_xlsx.seek(0)
+    st.download_button("Download XLSX", data=buf_xlsx,
                        file_name=f"locatiemanager-gegevens-{nu}.xlsx",
-                       mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button("Download CSV", data=res_df.to_csv(index=False).encode('utf-8'),
+                       file_name=f"locatiemanager-gegevens-{nu}.csv",
+                       mime="text/csv")
+    st.info("PDF-export (placeholder)")
+    # Dashboard
+    st.header("Dashboard & Visualisaties")
+    totaal = len(res_df)
+    succes = res_df['error'].eq('').sum()
+    fouten = totaal - succes
+    st.metric("Totaal locaties", totaal)
+    st.metric("Succesvolle locaties", succes)
+    st.metric("Fouten", fouten)
+    # Pie chart
+    df_vis = res_df.copy()
+    df_vis['Status'] = df_vis['error'].apply(lambda x: 'Ok' if x == '' else 'Error')
+    pie = alt.Chart(df_vis).mark_arc().encode(
+        theta=alt.Theta(field='count()', type='quantitative'),
+        color='Status'
+    )
+    st.altair_chart(pie, use_container_width=True)

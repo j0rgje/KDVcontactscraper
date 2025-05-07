@@ -8,7 +8,7 @@ from datetime import datetime
 from io import BytesIO
 from supabase import create_client
 
-# Init Supabase client using env vars uit secrets
+# Init Supabase client using env vars
 SUPABASE_URL = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -29,14 +29,10 @@ if not st.session_state.session:
             signup = st.form_submit_button("Registreren")
         if signup:
             # Sign up gebruiker via Supabase
-            result = supabase.auth.sign_up({"email": email, "password": password})
-            # Check op error of ontbrekend user object
-            error_attr = getattr(result, 'error', None)
-            user_attr = getattr(result, 'user', None)
-            if error_attr:
-                st.error(f"Registratie mislukt: {error_attr.message}")
-            elif not user_attr:
-                st.error("Registratie mislukt: geen gebruikersgegevens ontvangen.")
+            res = supabase.auth.sign_up({"email": email, "password": password})
+            err = getattr(res, 'error', None)
+            if err:
+                st.error(f"Registratie mislukt: {err.message}")
             else:
                 st.success("Registratie gelukt! Controleer je e-mail voor verificatie.")
         st.stop()
@@ -48,21 +44,21 @@ if not st.session_state.session:
             password = st.text_input("Wachtwoord", type="password")
             login = st.form_submit_button("Inloggen")
         if login:
-            # Log in via Supabase
-            result = supabase.auth.sign_in({"email": email, "password": password})
-            error_attr = getattr(result, 'error', None)
-            session_attr = getattr(result, 'session', None)
-            if error_attr or not session_attr:
-                msg = error_attr.message if error_attr else "Onbekende fout bij inloggen."
+            # Log in via Supabase (v2 API)
+            res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            err = getattr(res, 'error', None)
+            session = getattr(res, 'data', None)
+            if err or not session:
+                msg = err.message if err else "Onbekende fout bij inloggen."
                 st.error(f"Inloggen mislukt: {msg}")
             else:
-                st.session_state.session = session_attr
+                st.session_state.session = session
                 st.experimental_rerun()
         st.stop()
 
 # Vanaf hier is de gebruiker ingelogd
-user_email = st.session_state.session.user.email  # pydantic model attributen
-st.sidebar.write(f"Ingelogd als: {user_email}")
+user = st.session_state.session.user
+st.sidebar.write(f"Ingelogd als: {user.email}")
 
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
@@ -77,7 +73,7 @@ def zoek_website_bij_naam(locatienaam, plaats):
         for item in data.get("organic_results", []):
             if "link" in item:
                 return item["link"]
-    except Exception:
+    except:
         return None
     return None
 

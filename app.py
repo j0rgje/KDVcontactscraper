@@ -96,7 +96,7 @@ if not st.session_state.session:
             st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
         st.stop()
 
-# Main UI Sidebar Logout
+# Main UI Sidebar
 with st.sidebar:
     user_email = st.session_state.user.get('email', 'Onbekend') if st.session_state.user else 'Onbekend'
     
@@ -135,83 +135,97 @@ with st.sidebar:
                 if team.get('owner_id') == st.session_state.user['id']:
                     with col2:
                         if st.button("🗑️", key=f"delete_{team['id']}", help="Verwijder team"):
-                            # Bevestigingsdialoog
-                            st.markdown("---")
-                            st.warning(f"Weet je zeker dat je het team '{selected_team}' wilt verwijderen?")
-                            col3, col4 = st.columns([1, 1])
-                            with col3:
-                                if st.button("Ja", key="confirm_delete"):
-                                    try:
-                                        # Verwijder eerst alle team members
-                                        supabase.table('team_members').delete().eq('team_id', team['id']).execute()
-                                        # Verwijder dan het team zelf
-                                        supabase.table('teams').delete().eq('id', team['id']).execute()
-                                        st.success("Team succesvol verwijderd!")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Kon team niet verwijderen: {str(e)}")
-                            with col4:
-                                if st.button("Nee", key="cancel_delete"):
-                                    st.rerun()
-                
-                # Team beheer opties voor team eigenaar
-                if team.get('owner_id') == st.session_state.user['id']:
-                    st.markdown("---")
-                    st.markdown("##### Team Instellingen")
+                            st.session_state.show_delete_confirm = True
+                            st.session_state.delete_team_id = team['id']
+                            st.session_state.delete_team_name = selected_team
+
+# Toon bevestigingsdialoog op het hoofdscherm
+if st.session_state.get('show_delete_confirm'):
+    st.warning(f"Weet je zeker dat je het team '{st.session_state.delete_team_name}' wilt verwijderen?")
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button("Ja", key="confirm_delete"):
+            try:
+                team_id = st.session_state.delete_team_id
+                # Verwijder eerst alle team members
+                supabase.table('team_members').delete().eq('team_id', team_id).execute()
+                # Verwijder dan het team zelf
+                supabase.table('teams').delete().eq('id', team_id).execute()
+                st.success("Team succesvol verwijderd!")
+                st.session_state.show_delete_confirm = False
+                st.session_state.delete_team_id = None
+                st.session_state.delete_team_name = None
+                st.rerun()
+            except Exception as e:
+                st.error(f"Kon team niet verwijderen: {str(e)}")
+    with col2:
+        if st.button("Nee", key="cancel_delete"):
+            st.session_state.show_delete_confirm = False
+            st.session_state.delete_team_id = None
+            st.session_state.delete_team_name = None
+            st.rerun()
+
+# Vervolg van de sidebar code
+with st.sidebar:
+    if st.session_state.user and st.session_state.selected_team != "Persoonlijk":
+        team = next((t for t in st.session_state.teams if t['name'] == st.session_state.selected_team), None)
+        if team and team.get('owner_id') == st.session_state.user['id']:
+            st.markdown("---")
+            st.markdown("##### Team Instellingen")
+            
+            # Team leden beheer
+            st.subheader("👥 Teamleden Beheren")
+            new_member = st.text_input("Voeg teamlid toe (email)")
+            if st.button("➕ Lid Toevoegen", key="add_member"):
+                try:
+                    supabase.table('team_members').insert({
+                        'team_id': team['id'],
+                        'user_email': new_member
+                    }).execute()
+                    st.success(f"Gebruiker {new_member} toegevoegd aan team!")
+                except Exception as e:
+                    st.error(f"Kon gebruiker niet toevoegen: {str(e)}")
+            
+            # Logo beheer
+            st.markdown("---")
+            st.subheader("🖼️ Team Logo")
+            uploaded_file = st.file_uploader("Upload team logo (PNG, JPG)", type=['png', 'jpg', 'jpeg'])
+            if uploaded_file is not None:
+                try:
+                    # Open en resize het logo
+                    image = Image.open(uploaded_file)
+                    # Behoud aspect ratio en maak max 200px breed
+                    max_width = 200
+                    ratio = max_width / image.size[0]
+                    new_size = (max_width, int(image.size[1] * ratio))
+                    image = image.resize(new_size, Image.LANCZOS)
                     
-                    # Team leden beheer
-                    st.subheader("👥 Teamleden Beheren")
-                    new_member = st.text_input("Voeg teamlid toe (email)")
-                    if st.button("➕ Lid Toevoegen", key="add_member"):
-                        try:
-                            supabase.table('team_members').insert({
-                                'team_id': team['id'],
-                                'user_email': new_member
-                            }).execute()
-                            st.success(f"Gebruiker {new_member} toegevoegd aan team!")
-                        except Exception as e:
-                            st.error(f"Kon gebruiker niet toevoegen: {str(e)}")
+                    # Converteer naar base64
+                    buffered = io.BytesIO()
+                    image.save(buffered, format="PNG")
+                    img_str = base64.b64encode(buffered.getvalue()).decode()
+                    img_data = f"data:image/png;base64,{img_str}"
                     
-                    # Logo beheer
-                    st.markdown("---")
-                    st.subheader("🖼️ Team Logo")
-                    uploaded_file = st.file_uploader("Upload team logo (PNG, JPG)", type=['png', 'jpg', 'jpeg'])
-                    if uploaded_file is not None:
-                        try:
-                            # Open en resize het logo
-                            image = Image.open(uploaded_file)
-                            # Behoud aspect ratio en maak max 200px breed
-                            max_width = 200
-                            ratio = max_width / image.size[0]
-                            new_size = (max_width, int(image.size[1] * ratio))
-                            image = image.resize(new_size, Image.LANCZOS)
-                            
-                            # Converteer naar base64
-                            buffered = io.BytesIO()
-                            image.save(buffered, format="PNG")
-                            img_str = base64.b64encode(buffered.getvalue()).decode()
-                            img_data = f"data:image/png;base64,{img_str}"
-                            
-                            # Update het logo in de database
-                            supabase.table('teams').update({
-                                'logo_url': img_data
-                            }).eq('id', team['id']).execute()
-                            
-                            st.success("Logo succesvol geüpload!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Kon logo niet uploaden: {str(e)}")
+                    # Update het logo in de database
+                    supabase.table('teams').update({
+                        'logo_url': img_data
+                    }).eq('id', team['id']).execute()
                     
-                    if team.get('logo_url'):
-                        if st.button("🗑️ Verwijder Logo"):
-                            try:
-                                supabase.table('teams').update({
-                                    'logo_url': None
-                                }).eq('id', team['id']).execute()
-                                st.success("Logo verwijderd!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Kon logo niet verwijderen: {str(e)}")
+                    st.success("Logo succesvol geüpload!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Kon logo niet uploaden: {str(e)}")
+            
+            if team.get('logo_url'):
+                if st.button("🗑️ Verwijder Logo"):
+                    try:
+                        supabase.table('teams').update({
+                            'logo_url': None
+                        }).eq('id', team['id']).execute()
+                        st.success("Logo verwijderd!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Kon logo niet verwijderen: {str(e)}")
         
         # Team aanmaken
         st.markdown("---")

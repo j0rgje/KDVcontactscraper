@@ -100,6 +100,13 @@ if not st.session_state.session:
 with st.sidebar:
     user_email = st.session_state.user.get('email', 'Onbekend') if st.session_state.user else 'Onbekend'
     
+    # Logout button at the top
+    if st.button("🚪 Log uit"):
+        supabase.auth.sign_out()
+        for key in ['session','user','login_error','signup_error','signup_success','selected_team']:
+            st.session_state[key] = None
+        st.rerun()
+    
     # Settings sectie
     st.subheader("⚙️ Instellingen")
     st.write(f"📧 Account: {user_email}")
@@ -114,12 +121,38 @@ with st.sidebar:
         st.session_state.teams = teams
         
         if teams:
-            team_names = [team['name'] for team in teams]
-            selected_team = st.selectbox("Selecteer Team", ["Persoonlijk"] + team_names)
-            st.session_state.selected_team = selected_team
+            # Maak kolommen voor team selectie en verwijder knop
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                selected_team = st.selectbox("Selecteer Team", ["Persoonlijk"] + [team['name'] for team in teams])
+                st.session_state.selected_team = selected_team
             
+            # Toon verwijder knop alleen als een team is geselecteerd (niet voor "Persoonlijk")
             if selected_team != "Persoonlijk":
                 team = next(team for team in teams if team['name'] == selected_team)
+                
+                # Alleen team eigenaar kan verwijderen
+                if team.get('owner_id') == st.session_state.user['id']:
+                    with col2:
+                        if st.button("🗑️", key=f"delete_{team['id']}", help="Verwijder team"):
+                            # Bevestigingsdialoog
+                            st.markdown("---")
+                            st.warning(f"Weet je zeker dat je het team '{selected_team}' wilt verwijderen?")
+                            col3, col4 = st.columns([1, 1])
+                            with col3:
+                                if st.button("Ja", key="confirm_delete"):
+                                    try:
+                                        # Verwijder eerst alle team members
+                                        supabase.table('team_members').delete().eq('team_id', team['id']).execute()
+                                        # Verwijder dan het team zelf
+                                        supabase.table('teams').delete().eq('id', team['id']).execute()
+                                        st.success("Team succesvol verwijderd!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Kon team niet verwijderen: {str(e)}")
+                            with col4:
+                                if st.button("Nee", key="cancel_delete"):
+                                    st.rerun()
                 
                 # Team beheer opties voor team eigenaar
                 if team.get('owner_id') == st.session_state.user['id']:
@@ -179,21 +212,6 @@ with st.sidebar:
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Kon logo niet verwijderen: {str(e)}")
-                    
-                    # Team verwijderen optie
-                    st.markdown("---")
-                    st.subheader("⚠️ Gevaarlijke Zone")
-                    st.warning("Let op: Deze actie kan niet ongedaan worden gemaakt!")
-                    if st.button("🗑️ Team Verwijderen", type="primary"):
-                        try:
-                            # Verwijder eerst alle team members
-                            supabase.table('team_members').delete().eq('team_id', team['id']).execute()
-                            # Verwijder dan het team zelf
-                            supabase.table('teams').delete().eq('id', team['id']).execute()
-                            st.success("Team succesvol verwijderd!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Kon team niet verwijderen: {str(e)}")
         
         # Team aanmaken
         st.markdown("---")
@@ -211,11 +229,6 @@ with st.sidebar:
                 st.error(f"Kon team niet aanmaken: {str(e)}")
     
     st.markdown("---")
-    if st.button("🚪 Log uit"):
-        supabase.auth.sign_out()
-        for key in ['session','user','login_error','signup_error','signup_success','selected_team']:
-            st.session_state[key] = None
-        st.rerun()
 
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
@@ -357,7 +370,7 @@ with tab1:
         col1, col2 = st.columns([1, 1])
         with col1:
             if st.button("Voeg toe"):
-                if naam and plaats:
+                if naam en plaats:
                     st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
                 else:
                     st.warning("Vul zowel locatienaam als plaats in.")

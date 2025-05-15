@@ -94,9 +94,10 @@ if not st.session_state.session:
     
     # Check URL parameters voor verificatie
     if st.query_params and 'type' in st.query_params:
-        if st.query_params['type'] == 'signup' or st.query_params['type'] == 'recovery':
-            st.success("✅ Je e-mail is geverifieerd! Je kunt nu inloggen.")
-            st.query_params.clear()  # Verwijder de verificatie parameters uit de URL
+        if st.query_params['type'] == 'signup':
+            st.success("✅ Je e-mailadres is succesvol bevestigd! Je kunt hieronder inloggen met je geregistreerde e-mailadres en wachtwoord.")
+            # Verwijder de verificatie parameters uit de URL
+            st.query_params.clear()
     
     if action == "Inloggen":
         st.title("Login")

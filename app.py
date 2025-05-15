@@ -141,9 +141,10 @@ with st.sidebar:
                     st.error(f"Kon team niet aanmaken: {str(e)}")
     
     if st.button("Log uit"):
+        supabase.auth.sign_out()
         for key in ['session','user','login_error','signup_error','signup_success','selected_team']:
             st.session_state[key] = None
-        components.html("<script>window.location.reload();</script>", height=0)
+        st.rerun()
 
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")

@@ -24,7 +24,7 @@ st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
 # Initialize session state
 for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows", 
-           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress"]:
+           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten"]:
     if key not in st.session_state:
         st.session_state[key] = None if key != "signup_success" else False
 
@@ -38,6 +38,8 @@ if st.session_state.teams is None:
     st.session_state.teams = []
 if st.session_state.scraping_in_progress is None:
     st.session_state.scraping_in_progress = False
+if st.session_state.resultaten is None:
+    st.session_state.resultaten = []
 
 # Supabase initialization
 SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -306,7 +308,7 @@ with tab1:
         
         if st.session_state.scraping_in_progress:
             with st.spinner('Bezig met scrapen van locaties... Dit kan enkele minuten duren.'):
-                resultaten = []
+                st.session_state.resultaten = []
                 progress = st.progress(0)
                 
                 async def process_all_locations():
@@ -345,7 +347,7 @@ with tab1:
                             except Exception as e:
                                 st.warning(f"Kon geschiedenis niet opslaan: {str(e)}")
                         
-                        resultaten.append(resultaat)
+                        st.session_state.resultaten.append(resultaat)
                         progress.progress((idx+1)/len(input_df))
 
                 # Run async scraping
@@ -354,52 +356,61 @@ with tab1:
                 st.success('Scraping voltooid!')
         
         # Show results
-        res_df = pd.DataFrame(resultaten)
-        st.subheader("Resultaten")
-        st.dataframe(res_df)
+        if st.session_state.resultaten:
+            res_df = pd.DataFrame(st.session_state.resultaten)
+            st.subheader("Resultaten")
+            st.dataframe(res_df)
         
-        # Export
-        nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
-        buf_xlsx = BytesIO(); res_df.to_excel(buf_xlsx, index=False); buf_xlsx.seek(0)
-        st.download_button("Download XLSX", data=buf_xlsx,
-                           file_name=f"locatiemanager-gegevens-{nu}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        st.download_button("Download CSV", data=res_df.to_csv(index=False).encode('utf-8'),
-                           file_name=f"locatiemanager-gegevens-{nu}.csv",
-                           mime="text/csv")
-        # Generate PDF
-        buf_pdf = BytesIO()
-        doc = SimpleDocTemplate(buf_pdf, pagesize=letter)
-        data_pdf = [res_df.columns.tolist()] + res_df.values.tolist()
-        table = Table(data_pdf)
-        style = TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ])
-        table.setStyle(style)
-        doc.build([table])
-        buf_pdf.seek(0)
-        st.download_button("Download PDF", data=buf_pdf,
-                           file_name=f"locatiemanager-gegevens-{nu}.pdf",
-                           mime="application/pdf")
-        
-        # Dashboard
-        st.header("Dashboard & Visualisaties")
-        totaal = len(res_df)
-        succes = res_df['error'].eq('').sum()
-        fouten = totaal - succes
-        st.metric("Totaal locaties", totaal)
-        st.metric("Succesvolle locaties", succes)
-        st.metric("Fouten", fouten)
-        # Pie chart
-        df_vis = res_df.copy()
-        df_vis['Status'] = df_vis['error'].apply(lambda x: 'Ok' if x == '' else 'Error')
-        pie = alt.Chart(df_vis).mark_arc().encode(
-            theta=alt.Theta(field='count()', type='quantitative'),
-            color='Status'
-        )
-        st.altair_chart(pie, use_container_width=True)
+        # Export and visualizations
+        if st.session_state.resultaten:
+            res_df = pd.DataFrame(st.session_state.resultaten)
+            
+            # Export section
+            nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
+            buf_xlsx = BytesIO()
+            res_df.to_excel(buf_xlsx, index=False)
+            buf_xlsx.seek(0)
+            st.download_button("Download XLSX", data=buf_xlsx,
+                               file_name=f"locatiemanager-gegevens-{nu}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button("Download CSV", data=res_df.to_csv(index=False).encode('utf-8'),
+                               file_name=f"locatiemanager-gegevens-{nu}.csv",
+                               mime="text/csv")
+            
+            # Generate PDF
+            buf_pdf = BytesIO()
+            doc = SimpleDocTemplate(buf_pdf, pagesize=letter)
+            data_pdf = [res_df.columns.tolist()] + res_df.values.tolist()
+            table = Table(data_pdf)
+            style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ])
+            table.setStyle(style)
+            doc.build([table])
+            buf_pdf.seek(0)
+            st.download_button("Download PDF", data=buf_pdf,
+                               file_name=f"locatiemanager-gegevens-{nu}.pdf",
+                               mime="application/pdf")
+            
+            # Dashboard
+            st.header("Dashboard & Visualisaties")
+            totaal = len(res_df)
+            succes = res_df['error'].eq('').sum()
+            fouten = totaal - succes
+            st.metric("Totaal locaties", totaal)
+            st.metric("Succesvolle locaties", succes)
+            st.metric("Fouten", fouten)
+            
+            # Pie chart
+            df_vis = res_df.copy()
+            df_vis['Status'] = df_vis['error'].apply(lambda x: 'Ok' if x == '' else 'Error')
+            pie = alt.Chart(df_vis).mark_arc().encode(
+                theta=alt.Theta(field='count()', type='quantitative'),
+                color='Status'
+            )
+            st.altair_chart(pie, use_container_width=True)
 
 with tab2:
     if st.session_state.user:
@@ -465,8 +476,8 @@ with tab3:
         notes_dict = {note['locatie_id']: note for note in notes_response.data} if notes_response.data else {}
         
         # Toon notities voor laatste zoekresultaten
-        if 'resultaten' in locals():
-            for idx, res in enumerate(resultaten):
+        if st.session_state.resultaten:
+            for idx, res in enumerate(st.session_state.resultaten):
                 with st.expander(f"{res['locatienaam']} - {res['plaats']}"):
                     locatie_id = f"{res['locatienaam']}_{res['plaats']}"
                     existing_note = notes_dict.get(locatie_id, {}).get('content', '')

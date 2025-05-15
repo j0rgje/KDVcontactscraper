@@ -134,36 +134,40 @@ with st.sidebar:
                 # Alleen team eigenaar kan verwijderen
                 if team.get('owner_id') == st.session_state.user['id']:
                     with col2:
+                        # Als de delete knop wordt ingedrukt, toon de modal
                         if st.button("🗑️", key=f"delete_{team['id']}", help="Verwijder team"):
                             st.session_state.show_delete_confirm = True
                             st.session_state.delete_team_id = team['id']
                             st.session_state.delete_team_name = selected_team
+                            st.rerun()  # Changed from st.experimental_rerun()
 
-# Toon bevestigingsdialoog in een modal
+# Toon de modal dialog
 if st.session_state.get('show_delete_confirm'):
-    with st.modal(f"Team verwijderen"):
-        st.warning(f"Weet je zeker dat je het team '{st.session_state.delete_team_name}' wilt verwijderen?")
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.button("Ja", key="confirm_delete"):
-                try:
-                    team_id = st.session_state.delete_team_id
-                    # Verwijder eerst alle team members
-                    supabase.table('team_members').delete().eq('team_id', team_id).execute()
-                    # Verwijder dan het team zelf
-                    supabase.table('teams').delete().eq('id', team_id).execute()
+    with st.container():
+        delete_modal = st.modal("Team verwijderen")
+        with delete_modal:
+            st.warning(f"Weet je zeker dat je het team '{st.session_state.delete_team_name}' wilt verwijderen?")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Ja", key="confirm_delete"):
+                    try:
+                        team_id = st.session_state.delete_team_id
+                        # Verwijder eerst alle team members
+                        supabase.table('team_members').delete().eq('team_id', team_id).execute()
+                        # Verwijder dan het team zelf
+                        supabase.table('teams').delete().eq('id', team_id).execute()
+                        st.session_state.show_delete_confirm = False
+                        st.session_state.delete_team_id = None
+                        st.session_state.delete_team_name = None
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Kon team niet verwijderen: {str(e)}")
+            with col2:
+                if st.button("Nee", key="cancel_delete"):
                     st.session_state.show_delete_confirm = False
                     st.session_state.delete_team_id = None
                     st.session_state.delete_team_name = None
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Kon team niet verwijderen: {str(e)}")
-        with col2:
-            if st.button("Nee", key="cancel_delete"):
-                st.session_state.show_delete_confirm = False
-                st.session_state.delete_team_id = None
-                st.session_state.delete_team_name = None
-                st.rerun()
 
 # Vervolg van de sidebar code
 with st.sidebar:
@@ -384,7 +388,7 @@ with tab1:
         col1, col2 = st.columns([1, 1])
         with col1:
             if st.button("Voeg toe"):
-                if naam and plaats:
+                if naam and plaats:  # Changed from 'naam en plaats'
                     st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
                 else:
                     st.warning("Vul zowel locatienaam als plaats in.")

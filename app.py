@@ -27,6 +27,49 @@ from streamlit_modal import Modal
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
+# Add JavaScript to check hash parameters
+st.markdown("""
+<script>
+    window.addEventListener('load', function() {
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        if (params.get('type') === 'signup' && params.get('access_token')) {
+            const currentUrl = new URL(window.location.href.split('#')[0]);
+            currentUrl.searchParams.set('verified', 'true');
+            window.location.href = currentUrl.toString();
+        }
+    });
+</script>
+""", unsafe_allow_html=True)
+
+# Add JavaScript to handle hash parameters
+st.markdown("""
+<script>
+    // Check hash parameters on page load
+    window.addEventListener('load', function() {
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        if (params.get('type') === 'signup' && params.get('access_token')) {
+            // Store verification status in localStorage
+            localStorage.setItem('email_verified', 'true');
+            // Redirect to clean URL
+            window.location.href = window.location.pathname;
+        }
+    });
+</script>
+""", unsafe_allow_html=True)
+
+# Check for email verification status from localStorage
+verification_check_js = """
+<script>
+    if (localStorage.getItem('email_verified')) {
+        localStorage.removeItem('email_verified');  // Clear the flag
+        window.streamlit.setComponentValue('verified', true);
+    }
+</script>
+"""
+verification_component = components.html(verification_check_js, height=0)
+
 # Initialize modal voor team verwijderen en teamlid verwijderen
 modal = Modal("Team verwijderen", key="delete_modal")
 member_modal = Modal("Teamlid verwijderen", key="delete_member_modal")
@@ -65,22 +108,10 @@ st.markdown("""
 
 # Initialize session state
 for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows", 
-           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten"]:
+           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten",
+           "email_verified"]:
     if key not in st.session_state:
         st.session_state[key] = None if key != "signup_success" else False
-
-if st.session_state.manual_rows is None:
-    st.session_state.manual_rows = []
-if st.session_state.search_history is None:
-    st.session_state.search_history = []
-if st.session_state.notes is None:
-    st.session_state.notes = {}
-if st.session_state.teams is None:
-    st.session_state.teams = []
-if st.session_state.scraping_in_progress is None:
-    st.session_state.scraping_in_progress = False
-if st.session_state.resultaten is None:
-    st.session_state.resultaten = []
 
 # Supabase initialization
 SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -92,20 +123,21 @@ if not st.session_state.session:
     st.sidebar.title("Authenticatie")
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
     
-    # Check URL parameters voor verificatie
-    params = st.query_params
-    
-    # Check voor succesvol geverifieerd emailadres
-    is_verified = (
-        'access_token' in params and 
-        'type' in params and 
-        params['type'] == 'signup'
-    )
-    
-    if is_verified:
+    # Check voor email verificatie
+    params = dict(st.query_params)
+    if params.get('verified') == 'true':
         st.success("✅ Je e-mailadres is succesvol bevestigd! Je kunt hieronder inloggen met je geregistreerde e-mailadres en wachtwoord.")
-        # We verwijderen de parameters pas na het tonen van de melding
         st.query_params.clear()
+    
+    # Check voor email verificatie status
+    try:
+        session = supabase.auth.get_session()
+        if session and session.access_token:
+            user = supabase.auth.get_user(session.access_token)
+            if user and user.user.email_confirmed_at:
+                st.success("✅ Je e-mailadres is succesvol bevestigd! Je kunt hieronder inloggen met je geregistreerde e-mailadres en wachtwoord.")
+    except Exception:
+        pass
     
     if action == "Inloggen":
         st.title("Login")

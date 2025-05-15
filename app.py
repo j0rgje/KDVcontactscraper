@@ -24,7 +24,7 @@ st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
 # Initialize session state
 for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows", 
-           "selected_team", "user_role", "search_history", "notes", "teams"]:
+           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress"]:
     if key not in st.session_state:
         st.session_state[key] = None if key != "signup_success" else False
 
@@ -36,6 +36,8 @@ if st.session_state.notes is None:
     st.session_state.notes = {}
 if st.session_state.teams is None:
     st.session_state.teams = []
+if st.session_state.scraping_in_progress is None:
+    st.session_state.scraping_in_progress = False
 
 # Supabase initialization
 SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -296,51 +298,60 @@ with tab1:
                     st.rerun()
 
     # Start scraping
-    if not input_df.empty and st.button("Start scraping"):
-        resultaten = []
-        progress = st.progress(0)
+    if not input_df.empty:
+        start_button = st.button("Start scraping", disabled=st.session_state.scraping_in_progress)
+        if start_button:
+            st.session_state.scraping_in_progress = True
+            st.rerun()
         
-        async def process_all_locations():
-            for idx, row in input_df.iterrows():
-                naam, plaats = str(row['locatienaam']), str(row['plaats'])
+        if st.session_state.scraping_in_progress:
+            with st.spinner('Bezig met scrapen van locaties... Dit kan enkele minuten duren.'):
+                resultaten = []
+                progress = st.progress(0)
                 
-                # Try SerpAPI first, then fallback
-                site = zoek_website_bij_naam(naam, plaats)
-                if not site:
-                    site = await backup_search(naam, plaats)
-                
-                if site:
-                    data = await scrape_deep(site)
-                else:
-                    data = {'error': 'Geen website gevonden'}
+                async def process_all_locations():
+                    for idx, row in input_df.iterrows():
+                        naam, plaats = str(row['locatienaam']), str(row['plaats'])
+                        
+                        # Try SerpAPI first, then fallback
+                        site = zoek_website_bij_naam(naam, plaats)
+                        if not site:
+                            site = await backup_search(naam, plaats)
+                        
+                        if site:
+                            data = await scrape_deep(site)
+                        else:
+                            data = {'error': 'Geen website gevonden'}
 
-                resultaat = {
-                    'locatienaam': naam,
-                    'plaats': plaats,
-                    'website': site,
-                    'emails': ", ".join(data.get('emails', [])),
-                    'telefoons': ", ".join(data.get('telefoons', [])),
-                    'adressen': ", ".join(data.get('adressen', [])),
-                    'managers': " | ".join(data.get('managers', [])),
-                    'error': data.get('error', '')
-                }
-                
-                # Save to history in Supabase
-                if st.session_state.user:
-                    try:
-                        supabase.table('search_history').insert({
-                            'user_id': st.session_state.user['id'],
-                            'search_data': resultaat,
-                            'timestamp': datetime.now().isoformat()
-                        }).execute()
-                    except Exception as e:
-                        st.warning(f"Kon geschiedenis niet opslaan: {str(e)}")
-                
-                resultaten.append(resultaat)
-                progress.progress((idx+1)/len(input_df))
+                        resultaat = {
+                            'locatienaam': naam,
+                            'plaats': plaats,
+                            'website': site,
+                            'emails': ", ".join(data.get('emails', [])),
+                            'telefoons': ", ".join(data.get('telefoons', [])),
+                            'adressen': ", ".join(data.get('adressen', [])),
+                            'managers': " | ".join(data.get('managers', [])),
+                            'error': data.get('error', '')
+                        }
+                        
+                        # Save to history in Supabase
+                        if st.session_state.user:
+                            try:
+                                supabase.table('search_history').insert({
+                                    'user_id': st.session_state.user['id'],
+                                    'search_data': resultaat,
+                                    'timestamp': datetime.now().isoformat()
+                                }).execute()
+                            except Exception as e:
+                                st.warning(f"Kon geschiedenis niet opslaan: {str(e)}")
+                        
+                        resultaten.append(resultaat)
+                        progress.progress((idx+1)/len(input_df))
 
-        # Run async scraping
-        asyncio.run(process_all_locations())
+                # Run async scraping
+                asyncio.run(process_all_locations())
+                st.session_state.scraping_in_progress = False
+                st.success('Scraping voltooid!')
         
         # Show results
         res_df = pd.DataFrame(resultaten)

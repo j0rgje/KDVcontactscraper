@@ -93,7 +93,6 @@ if not st.session_state.session:
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
     
     # Check URL parameters voor verificatie
-    # Vervang alle experimental query params met de nieuwe API
     if st.query_params and 'type' in st.query_params:
         if st.query_params['type'] == 'signup' or st.query_params['type'] == 'recovery':
             st.success("✅ Je e-mail is geverifieerd! Je kunt nu inloggen.")

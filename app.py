@@ -18,6 +18,9 @@ from typing import List, Dict
 from urllib.parse import urljoin
 import asyncio
 import aiohttp
+from PIL import Image
+import io
+import base64
 
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
@@ -134,6 +137,46 @@ with st.sidebar:
                                     st.success(f"Gebruiker {new_member} toegevoegd aan team!")
                                 except Exception as e:
                                     st.error(f"Kon gebruiker niet toevoegen: {str(e)}")
+                        
+                        # Logo upload sectie
+                        with st.expander("🖼️ Team Logo"):
+                            uploaded_file = st.file_uploader("Upload team logo (PNG, JPG)", type=['png', 'jpg', 'jpeg'])
+                            if uploaded_file is not None:
+                                try:
+                                    # Open en resize het logo
+                                    image = Image.open(uploaded_file)
+                                    # Behoud aspect ratio en maak max 200px breed
+                                    max_width = 200
+                                    ratio = max_width / image.size[0]
+                                    new_size = (max_width, int(image.size[1] * ratio))
+                                    image = image.resize(new_size, Image.LANCZOS)
+                                    
+                                    # Converteer naar base64
+                                    buffered = io.BytesIO()
+                                    image.save(buffered, format="PNG")
+                                    img_str = base64.b64encode(buffered.getvalue()).decode()
+                                    img_data = f"data:image/png;base64,{img_str}"
+                                    
+                                    # Update het logo in de database
+                                    supabase.table('teams').update({
+                                        'logo_url': img_data
+                                    }).eq('id', team['id']).execute()
+                                    
+                                    st.success("Logo succesvol geüpload!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Kon logo niet uploaden: {str(e)}")
+                            
+                            if team.get('logo_url'):
+                                if st.button("🗑️ Verwijder Logo"):
+                                    try:
+                                        supabase.table('teams').update({
+                                            'logo_url': None
+                                        }).eq('id', team['id']).execute()
+                                        st.success("Logo verwijderd!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Kon logo niet verwijderen: {str(e)}")
                         
                         # Team verwijderen optie
                         with st.expander("⚠️ Gevaarlijke Zone"):
@@ -284,7 +327,14 @@ def scrape_contactgegevens(url):
     return result
 
 # Scraper UI
-st.title("Kinderopvang Locatiemanager Scraper")
+if st.session_state.session:
+    # Logo weergave bovenaan de pagina
+    if st.session_state.selected_team and st.session_state.selected_team != "Persoonlijk":
+        team = next((t for t in st.session_state.teams if t['name'] == st.session_state.selected_team), None)
+        if team and team.get('logo_url'):
+            st.image(team['logo_url'], width=200)
+    
+    st.title("Kinderopvang Locatiemanager Scraper")
 
 # Tabs voor hoofdnavigatie
 tab1, tab2, tab3 = st.tabs(["Zoeken", "Geschiedenis", "Notities"])

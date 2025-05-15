@@ -1,9 +1,9 @@
-
 -- Teams tabel
 create table public.teams (
   id uuid default uuid_generate_v4() primary key,
   name text not null,
   owner_id uuid references auth.users(id) not null,
+  logo_url text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 

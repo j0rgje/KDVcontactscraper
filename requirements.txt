@@ -12,3 +12,5 @@ altair
 supabase
 reportlab
 aiohttp
+streamlit-option-menu
+streamlit-modal

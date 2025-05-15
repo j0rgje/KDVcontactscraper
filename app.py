@@ -21,9 +21,46 @@ import aiohttp
 from PIL import Image
 import io
 import base64
+from streamlit_modal import Modal
+
 
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
+
+# Initialize modal
+modal = Modal("Team verwijderen", key="delete_modal")
+
+# Custom CSS voor de pop-up dialog
+st.markdown("""
+    <style>
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5);
+        z-index: 1000;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+    .modal-content {
+        background-color: white;
+        padding: 20px;
+        border-radius: 5px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        width: 400px;
+        text-align: center;
+    }
+    .modal-buttons {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 20px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # Initialize session state
 for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows", 
@@ -134,18 +171,15 @@ with st.sidebar:
                 # Alleen team eigenaar kan verwijderen
                 if team.get('owner_id') == st.session_state.user['id']:
                     with col2:
-                        # Als de delete knop wordt ingedrukt, toon de modal
                         if st.button("🗑️", key=f"delete_{team['id']}", help="Verwijder team"):
                             st.session_state.show_delete_confirm = True
                             st.session_state.delete_team_id = team['id']
                             st.session_state.delete_team_name = selected_team
-                            st.rerun()  # Changed from st.experimental_rerun()
+                            st.rerun()
 
-# Toon de modal dialog
-if st.session_state.get('show_delete_confirm'):
-    with st.container():
-        delete_modal = st.modal("Team verwijderen")
-        with delete_modal:
+    # Toon de bevestigingsdialoog met modal
+    if st.session_state.get('show_delete_confirm'):
+        with modal.container():
             st.warning(f"Weet je zeker dat je het team '{st.session_state.delete_team_name}' wilt verwijderen?")
             col1, col2 = st.columns(2)
             with col1:
@@ -167,6 +201,7 @@ if st.session_state.get('show_delete_confirm'):
                     st.session_state.show_delete_confirm = False
                     st.session_state.delete_team_id = None
                     st.session_state.delete_team_name = None
+                    modal.close()
                     st.rerun()
 
 # Vervolg van de sidebar code
@@ -355,7 +390,7 @@ def scrape_contactgegevens(url):
         addr_pattern = r"[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+|\d{4}\s?[A-Z]{2}"
         result['adressen'] = re.findall(addr_pattern, text)
         # Managers
-        result['managers'] = [line.strip() for line in text.split("\n") if re.search(r"locatiemanager", line, flags=re.IGNORECASE)]
+        result['managers'] = [line.strip() for line in text.split("\n") if re.search(r"locatiemanager", line, flags= re.IGNORECASE)]
     except Exception as e:
         result['error'] = str(e)
     return result

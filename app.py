@@ -53,19 +53,18 @@ if not st.session_state.session:
             password = st.text_input("Wachtwoord", type="password")
             submit = st.form_submit_button("Inloggen")
         if submit:
-            res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-            err = getattr(res, 'error', None)
-            sess = getattr(res, 'session', None)
-            user = getattr(res, 'user', None)
-            if err:
-                st.session_state.login_error = err.message
-            elif sess is None:
-                st.session_state.login_error = "Geen geldige sessie ontvangen. Heb je je e-mail bevestigd?"
-            else:
-                st.session_state.session = sess
-                st.session_state.user = {"email": user.email, "id": user.id} if user else None
-                st.session_state.login_error = None
-                components.html("<script>window.location.href=window.location.href;</script>", height=0)
+            try:
+                res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                if res.user and res.session:
+                    st.session_state.session = res.session
+                    st.session_state.user = {"email": res.user.email, "id": res.user.id}
+                    st.session_state.login_error = None
+                    st.rerun()
+                else:
+                    st.session_state.login_error = "Ongeldige inloggegevens. Controleer je e-mail en wachtwoord."
+            except Exception as e:
+                st.session_state.login_error = f"Inloggen mislukt: {str(e)}"
+                
         if st.session_state.login_error:
             st.error(st.session_state.login_error)
         st.stop()
@@ -272,14 +271,29 @@ with tab1:
     elif mode == "Handmatige invoer":
         naam = st.text_input("Locatienaam")
         plaats = st.text_input("Plaats")
-        if st.button("Voeg toe"):
-            if naam and plaats:
-                st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
-            else:
-                st.warning("Vul zowel locatienaam als plaats in.")
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("Voeg toe"):
+                if naam and plaats:
+                    st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
+                else:
+                    st.warning("Vul zowel locatienaam als plaats in.")
+        
         if st.session_state.manual_rows:
             input_df = pd.DataFrame(st.session_state.manual_rows)
             st.write("### Handmatige invoer", input_df)
+            
+            # Verwijder optie toevoegen
+            with st.expander("Verwijder invoer"):
+                te_verwijderen = st.multiselect(
+                    "Selecteer rijen om te verwijderen",
+                    options=range(len(st.session_state.manual_rows)),
+                    format_func=lambda x: f"{st.session_state.manual_rows[x]['locatienaam']} - {st.session_state.manual_rows[x]['plaats']}"
+                )
+                if st.button("Verwijder geselecteerde"):
+                    for index in sorted(te_verwijderen, reverse=True):
+                        st.session_state.manual_rows.pop(index)
+                    st.rerun()
 
     # Start scraping
     if not input_df.empty and st.button("Start scraping"):

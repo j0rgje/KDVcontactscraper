@@ -93,11 +93,19 @@ if not st.session_state.session:
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
     
     # Check URL parameters voor verificatie
-    if st.query_params and 'type' in st.query_params:
-        if st.query_params['type'] == 'signup':
-            st.success("✅ Je e-mailadres is succesvol bevestigd! Je kunt hieronder inloggen met je geregistreerde e-mailadres en wachtwoord.")
-            # Verwijder de verificatie parameters uit de URL
-            st.query_params.clear()
+    params = st.query_params
+    
+    # Check voor succesvol geverifieerd emailadres
+    is_verified = (
+        'access_token' in params and 
+        'type' in params and 
+        params['type'] == 'signup'
+    )
+    
+    if is_verified:
+        st.success("✅ Je e-mailadres is succesvol bevestigd! Je kunt hieronder inloggen met je geregistreerde e-mailadres en wachtwoord.")
+        # We verwijderen de parameters pas na het tonen van de melding
+        st.query_params.clear()
     
     if action == "Inloggen":
         st.title("Login")

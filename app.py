@@ -139,31 +139,31 @@ with st.sidebar:
                             st.session_state.delete_team_id = team['id']
                             st.session_state.delete_team_name = selected_team
 
-# Toon bevestigingsdialoog op het hoofdscherm
+# Toon bevestigingsdialoog in een modal
 if st.session_state.get('show_delete_confirm'):
-    st.warning(f"Weet je zeker dat je het team '{st.session_state.delete_team_name}' wilt verwijderen?")
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        if st.button("Ja", key="confirm_delete"):
-            try:
-                team_id = st.session_state.delete_team_id
-                # Verwijder eerst alle team members
-                supabase.table('team_members').delete().eq('team_id', team_id).execute()
-                # Verwijder dan het team zelf
-                supabase.table('teams').delete().eq('id', team_id).execute()
-                st.success("Team succesvol verwijderd!")
+    with st.modal(f"Team verwijderen"):
+        st.warning(f"Weet je zeker dat je het team '{st.session_state.delete_team_name}' wilt verwijderen?")
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("Ja", key="confirm_delete"):
+                try:
+                    team_id = st.session_state.delete_team_id
+                    # Verwijder eerst alle team members
+                    supabase.table('team_members').delete().eq('team_id', team_id).execute()
+                    # Verwijder dan het team zelf
+                    supabase.table('teams').delete().eq('id', team_id).execute()
+                    st.session_state.show_delete_confirm = False
+                    st.session_state.delete_team_id = None
+                    st.session_state.delete_team_name = None
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Kon team niet verwijderen: {str(e)}")
+        with col2:
+            if st.button("Nee", key="cancel_delete"):
                 st.session_state.show_delete_confirm = False
                 st.session_state.delete_team_id = None
                 st.session_state.delete_team_name = None
                 st.rerun()
-            except Exception as e:
-                st.error(f"Kon team niet verwijderen: {str(e)}")
-    with col2:
-        if st.button("Nee", key="cancel_delete"):
-            st.session_state.show_delete_confirm = False
-            st.session_state.delete_team_id = None
-            st.session_state.delete_team_name = None
-            st.rerun()
 
 # Vervolg van de sidebar code
 with st.sidebar:

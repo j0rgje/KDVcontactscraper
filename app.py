@@ -9,20 +9,33 @@ from io import BytesIO
 from supabase import create_client
 import altair as alt
 import phonenumbers
-import streamlit.components.v1 as components  # for JS reload
+import streamlit.components.v1 as components
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
+import json
+from typing import List, Dict
+from urllib.parse import urljoin
+import asyncio
+import aiohttp
 
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
 # Initialize session state
-for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows"]:
+for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows", 
+           "selected_team", "user_role", "search_history", "notes", "teams"]:
     if key not in st.session_state:
         st.session_state[key] = None if key != "signup_success" else False
+
 if st.session_state.manual_rows is None:
     st.session_state.manual_rows = []
+if st.session_state.search_history is None:
+    st.session_state.search_history = []
+if st.session_state.notes is None:
+    st.session_state.notes = {}
+if st.session_state.teams is None:
+    st.session_state.teams = []
 
 # Supabase initialization
 SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -81,8 +94,51 @@ if not st.session_state.session:
 with st.sidebar:
     user_email = st.session_state.user.get('email', 'Onbekend') if st.session_state.user else 'Onbekend'
     st.write(f"Ingelogd als: {user_email}")
+    
+    # Team management sectie
+    st.subheader("Team Beheer")
+    if st.session_state.user:
+        # Haal teams op waar gebruiker lid van is
+        teams_response = supabase.table('teams').select('*').execute()
+        teams = teams_response.data if hasattr(teams_response, 'data') else []
+        st.session_state.teams = teams
+        
+        if teams:
+            team_names = [team['name'] for team in teams]
+            selected_team = st.selectbox("Selecteer Team", ["Persoonlijk"] + team_names)
+            st.session_state.selected_team = selected_team
+            
+            if selected_team != "Persoonlijk":
+                team = next(team for team in teams if team['name'] == selected_team)
+                if team.get('owner_id') == st.session_state.user['id']:
+                    with st.expander("Team Beheer"):
+                        new_member = st.text_input("Voeg teamlid toe (email)")
+                        if st.button("Toevoegen"):
+                            try:
+                                supabase.table('team_members').insert({
+                                    'team_id': team['id'],
+                                    'user_email': new_member
+                                }).execute()
+                                st.success(f"Gebruiker {new_member} toegevoegd aan team!")
+                            except Exception as e:
+                                st.error(f"Kon gebruiker niet toevoegen: {str(e)}")
+        
+        # Team aanmaken
+        with st.expander("Nieuw Team Aanmaken"):
+            new_team_name = st.text_input("Team naam")
+            if st.button("Team Aanmaken"):
+                try:
+                    supabase.table('teams').insert({
+                        'name': new_team_name,
+                        'owner_id': st.session_state.user['id']
+                    }).execute()
+                    st.success("Team aangemaakt!")
+                    st.experimental_rerun()
+                except Exception as e:
+                    st.error(f"Kon team niet aanmaken: {str(e)}")
+    
     if st.button("Log uit"):
-        for key in ['session','user','login_error','signup_error','signup_success']:
+        for key in ['session','user','login_error','signup_error','signup_success','selected_team']:
             st.session_state[key] = None
         components.html("<script>window.location.reload();</script>", height=0)
 
@@ -103,6 +159,74 @@ def zoek_website_bij_naam(locatienaam, plaats):
                 return link
     except Exception:
         return None
+    return None
+
+# Enhanced async scraping functions
+async def fetch_page(session, url):
+    try:
+        async with session.get(url, timeout=10) as response:
+            return await response.text()
+    except Exception as e:
+        return None
+
+async def scrape_deep(url, max_depth=2):
+    result = {"emails": set(), "telefoons": set(), "adressen": set(), "managers": set(), "error": ""}
+    visited = set()
+    base_url = url
+
+    async with aiohttp.ClientSession() as session:
+        async def process_page(url, depth):
+            if depth > max_depth or url in visited:
+                return
+            visited.add(url)
+            
+            html = await fetch_page(session, url)
+            if not html:
+                return
+
+            soup = BeautifulSoup(html, 'html.parser')
+            text = soup.get_text(separator="\n")
+            
+            # Extract data
+            result['emails'].update(re.findall(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}", text))
+            for match in phonenumbers.PhoneNumberMatcher(text, "NL"):
+                result['telefoons'].add(phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL))
+            result['adressen'].update(re.findall(r"[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+|\d{4}\s?[A-Z]{2}", text))
+            result['managers'].update(line.strip() for line in text.split("\n") if re.search(r"locatiemanager|manager|directeur", line, flags=re.IGNORECASE))
+            
+            # Find more links
+            if depth < max_depth:
+                links = soup.find_all('a', href=True)
+                for link in links:
+                    href = link['href']
+                    if href.startswith('/') or href.startswith(base_url):
+                        full_url = urljoin(base_url, href)
+                        if full_url not in visited and base_url in full_url:
+                            await process_page(full_url, depth + 1)
+
+        try:
+            await process_page(url, 0)
+        except Exception as e:
+            result['error'] = str(e)
+
+    return {k: list(v) if isinstance(v, set) else v for k, v in result.items()}
+
+# Function to backup search if SerpAPI fails
+async def backup_search(locatienaam, plaats):
+    query = f"{locatienaam} {plaats} kinderopvang"
+    search_url = f"https://www.google.com/search?q={query}"
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            html = await fetch_page(session, search_url)
+            if html:
+                soup = BeautifulSoup(html, 'html.parser')
+                for link in soup.find_all('a'):
+                    href = link.get('href', '')
+                    if 'url?q=' in href and not 'google.com' in href:
+                        return href.split('url?q=')[1].split('&')[0]
+        except Exception:
+            pass
     return None
 
 # Enhanced scrape: emails, phones, addresses, managers
@@ -132,89 +256,219 @@ def scrape_contactgegevens(url):
 
 # Scraper UI
 st.title("Kinderopvang Locatiemanager Scraper")
-# Mode select
-mode = st.radio("Invoermodus:", ["Bestand upload", "Handmatige invoer"])
-input_df = pd.DataFrame()
-if mode == "Bestand upload":
-    uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
-    if uploaded_file:
-        input_df = pd.read_excel(uploaded_file)
-        st.write("### Ingelezen data", input_df.head())
-elif mode == "Handmatige invoer":
-    naam = st.text_input("Locatienaam")
-    plaats = st.text_input("Plaats")
-    if st.button("Voeg toe"):
-        if naam and plaats:
-            st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
-        else:
-            st.warning("Vul zowel locatienaam als plaats in.")
-    if st.session_state.manual_rows:
-        input_df = pd.DataFrame(st.session_state.manual_rows)
-        st.write("### Handmatige invoer", input_df)
 
-# Start scraping
-if not input_df.empty and st.button("Start scraping"):
-    resultaten = []
-    progress = st.progress(0)
-    for idx, row in input_df.iterrows():
-        naam, plaats = str(row['locatienaam']), str(row['plaats'])
-        site = zoek_website_bij_naam(naam, plaats)
-        time.sleep(1)
-        data = scrape_contactgegevens(site) if site else {'error': 'Geen website'}
-        resultaten.append({
-            'locatienaam': naam,
-            'plaats': plaats,
-            'website': site,
-            'emails': ", ".join(data.get('emails', [])),
-            'telefoons': ", ".join(data.get('telefoons', [])),
-            'adressen': ", ".join(data.get('adressen', [])),
-            'managers': " | ".join(data.get('managers', [])),
-            'error': data.get('error', '')
-        })
-        progress.progress((idx+1)/len(input_df))
-    # Show and export
-    res_df = pd.DataFrame(resultaten)
-    st.subheader("Resultaten")
-    st.dataframe(res_df)
-    # Export
-    nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
-    buf_xlsx = BytesIO(); res_df.to_excel(buf_xlsx, index=False); buf_xlsx.seek(0)
-    st.download_button("Download XLSX", data=buf_xlsx,
-                       file_name=f"locatiemanager-gegevens-{nu}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    st.download_button("Download CSV", data=res_df.to_csv(index=False).encode('utf-8'),
-                       file_name=f"locatiemanager-gegevens-{nu}.csv",
-                       mime="text/csv")
-    # Generate PDF
-    buf_pdf = BytesIO()
-    doc = SimpleDocTemplate(buf_pdf, pagesize=letter)
-    data_pdf = [res_df.columns.tolist()] + res_df.values.tolist()
-    table = Table(data_pdf)
-    style = TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-    ])
-    table.setStyle(style)
-    doc.build([table])
-    buf_pdf.seek(0)
-    st.download_button("Download PDF", data=buf_pdf,
-                       file_name=f"locatiemanager-gegevens-{nu}.pdf",
-                       mime="application/pdf")
-    
-    # Dashboard
-    st.header("Dashboard & Visualisaties")
-    totaal = len(res_df)
-    succes = res_df['error'].eq('').sum()
-    fouten = totaal - succes
-    st.metric("Totaal locaties", totaal)
-    st.metric("Succesvolle locaties", succes)
-    st.metric("Fouten", fouten)
-    # Pie chart
-    df_vis = res_df.copy()
-    df_vis['Status'] = df_vis['error'].apply(lambda x: 'Ok' if x == '' else 'Error')
-    pie = alt.Chart(df_vis).mark_arc().encode(
-        theta=alt.Theta(field='count()', type='quantitative'),
-        color='Status'
-    )
-    st.altair_chart(pie, use_container_width=True)
+# Tabs voor hoofdnavigatie
+tab1, tab2, tab3 = st.tabs(["Zoeken", "Geschiedenis", "Notities"])
+
+with tab1:
+    # Mode select
+    mode = st.radio("Invoermodus:", ["Bestand upload", "Handmatige invoer"])
+    input_df = pd.DataFrame()
+    if mode == "Bestand upload":
+        uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+        if uploaded_file:
+            input_df = pd.read_excel(uploaded_file)
+            st.write("### Ingelezen data", input_df.head())
+    elif mode == "Handmatige invoer":
+        naam = st.text_input("Locatienaam")
+        plaats = st.text_input("Plaats")
+        if st.button("Voeg toe"):
+            if naam en plaats:
+                st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
+            else:
+                st.warning("Vul zowel locatienaam als plaats in.")
+        if st.session_state.manual_rows:
+            input_df = pd.DataFrame(st.session_state.manual_rows)
+            st.write("### Handmatige invoer", input_df)
+
+    # Start scraping
+    if not input_df.empty and st.button("Start scraping"):
+        resultaten = []
+        progress = st.progress(0)
+        
+        async def process_all_locations():
+            for idx, row in input_df.iterrows():
+                naam, plaats = str(row['locatienaam']), str(row['plaats'])
+                
+                # Try SerpAPI first, then fallback
+                site = zoek_website_bij_naam(naam, plaats)
+                if not site:
+                    site = await backup_search(naam, plaats)
+                
+                if site:
+                    data = await scrape_deep(site)
+                else:
+                    data = {'error': 'Geen website gevonden'}
+
+                resultaat = {
+                    'locatienaam': naam,
+                    'plaats': plaats,
+                    'website': site,
+                    'emails': ", ".join(data.get('emails', [])),
+                    'telefoons': ", ".join(data.get('telefoons', [])),
+                    'adressen': ", ".join(data.get('adressen', [])),
+                    'managers': " | ".join(data.get('managers', [])),
+                    'error': data.get('error', '')
+                }
+                
+                # Save to history in Supabase
+                if st.session_state.user:
+                    try:
+                        supabase.table('search_history').insert({
+                            'user_id': st.session_state.user['id'],
+                            'search_data': resultaat,
+                            'timestamp': datetime.now().isoformat()
+                        }).execute()
+                    except Exception as e:
+                        st.warning(f"Kon geschiedenis niet opslaan: {str(e)}")
+                
+                resultaten.append(resultaat)
+                progress.progress((idx+1)/len(input_df))
+
+        # Run async scraping
+        asyncio.run(process_all_locations())
+        
+        # Show results
+        res_df = pd.DataFrame(resultaten)
+        st.subheader("Resultaten")
+        st.dataframe(res_df)
+        
+        # Export
+        nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
+        buf_xlsx = BytesIO(); res_df.to_excel(buf_xlsx, index=False); buf_xlsx.seek(0)
+        st.download_button("Download XLSX", data=buf_xlsx,
+                           file_name=f"locatiemanager-gegevens-{nu}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Download CSV", data=res_df.to_csv(index=False).encode('utf-8'),
+                           file_name=f"locatiemanager-gegevens-{nu}.csv",
+                           mime="text/csv")
+        # Generate PDF
+        buf_pdf = BytesIO()
+        doc = SimpleDocTemplate(buf_pdf, pagesize=letter)
+        data_pdf = [res_df.columns.tolist()] + res_df.values.tolist()
+        table = Table(data_pdf)
+        style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ])
+        table.setStyle(style)
+        doc.build([table])
+        buf_pdf.seek(0)
+        st.download_button("Download PDF", data=buf_pdf,
+                           file_name=f"locatiemanager-gegevens-{nu}.pdf",
+                           mime="application/pdf")
+        
+        # Dashboard
+        st.header("Dashboard & Visualisaties")
+        totaal = len(res_df)
+        succes = res_df['error'].eq('').sum()
+        fouten = totaal - succes
+        st.metric("Totaal locaties", totaal)
+        st.metric("Succesvolle locaties", succes)
+        st.metric("Fouten", fouten)
+        # Pie chart
+        df_vis = res_df.copy()
+        df_vis['Status'] = df_vis['error'].apply(lambda x: 'Ok' if x == '' else 'Error')
+        pie = alt.Chart(df_vis).mark_arc().encode(
+            theta=alt.Theta(field='count()', type='quantitative'),
+            color='Status'
+        )
+        st.altair_chart(pie, use_container_width=True)
+
+with tab2:
+    if st.session_state.user:
+        st.header("Zoekgeschiedenis")
+        # Haal geschiedenis op uit Supabase
+        history_response = supabase.table('search_history')\
+            .select('*')\
+            .eq('user_id', st.session_state.user['id'])\
+            .order('timestamp', desc=True)\
+            .execute()
+        
+        if history_response.data:
+            history_df = pd.DataFrame([
+                {
+                    'timestamp': h['timestamp'],
+                    **h['search_data']
+                } for h in history_response.data
+            ])
+            
+            # Filter opties
+            col1, col2 = st.columns(2)
+            with col1:
+                filter_date = st.date_input("Filter op datum", value=None)
+            with col2:
+                filter_plaats = st.selectbox("Filter op plaats", 
+                                           ["Alle"] + list(history_df['plaats'].unique()))
+            
+            # Pas filters toe
+            if filter_date:
+                history_df = history_df[pd.to_datetime(history_df['timestamp']).dt.date == filter_date]
+            if filter_plaats != "Alle":
+                history_df = history_df[history_df['plaats'] == filter_plaats]
+            
+            # Toon geschiedenis
+            st.dataframe(history_df)
+            
+            # Export geschiedenis
+            if st.button("Exporteer Geschiedenis"):
+                nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
+                buf_xlsx = BytesIO()
+                history_df.to_excel(buf_xlsx, index=False)
+                buf_xlsx.seek(0)
+                st.download_button("Download Geschiedenis (XLSX)", 
+                                 data=buf_xlsx,
+                                 file_name=f"zoekgeschiedenis-{nu}.xlsx",
+                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else:
+            st.info("Nog geen zoekgeschiedenis beschikbaar")
+    else:
+        st.warning("Log in om je zoekgeschiedenis te bekijken")
+
+with tab3:
+    if st.session_state.user:
+        st.header("Notities")
+        
+        # Haal bestaande notities op
+        notes_response = supabase.table('notes')\
+            .select('*')\
+            .eq('user_id', st.session_state.user['id'])\
+            .execute()
+        
+        # Converteer naar dict voor snelle lookup
+        notes_dict = {note['locatie_id']: note for note in notes_response.data} if notes_response.data else {}
+        
+        # Toon notities voor laatste zoekresultaten
+        if 'resultaten' in locals():
+            for idx, res in enumerate(resultaten):
+                with st.expander(f"{res['locatienaam']} - {res['plaats']}"):
+                    locatie_id = f"{res['locatienaam']}_{res['plaats']}"
+                    existing_note = notes_dict.get(locatie_id, {}).get('content', '')
+                    new_note = st.text_area("Notitie", value=existing_note, key=f"note_{idx}")
+                    
+                    if new_note != existing_note:
+                        if st.button("Opslaan", key=f"save_{idx}"):
+                            try:
+                                if locatie_id in notes_dict:
+                                    # Update bestaande notitie
+                                    supabase.table('notes')\
+                                        .update({'content': new_note})\
+                                        .eq('locatie_id', locatie_id)\
+                                        .execute()
+                                else:
+                                    # Maak nieuwe notitie
+                                    supabase.table('notes')\
+                                        .insert({
+                                            'user_id': st.session_state.user['id'],
+                                            'locatie_id': locatie_id,
+                                            'content': new_note
+                                        })\
+                                        .execute()
+                                st.success("Notitie opgeslagen!")
+                            except Exception as e:
+                                st.error(f"Kon notitie niet opslaan: {str(e)}")
+        else:
+            st.info("Zoek eerst naar locaties om notities toe te voegen")
+    else:
+        st.warning("Log in om notities te kunnen maken")

@@ -27,8 +27,9 @@ from streamlit_modal import Modal
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
-# Initialize modal
+# Initialize modal voor team verwijderen en teamlid verwijderen
 modal = Modal("Team verwijderen", key="delete_modal")
+member_modal = Modal("Teamlid verwijderen", key="delete_member_modal")
 
 # Custom CSS voor de pop-up dialog
 st.markdown("""
@@ -64,7 +65,9 @@ st.markdown("""
 
 # Initialize session state
 for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows", 
-           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten"]:
+           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten",
+           "show_delete_confirm", "delete_team_id", "delete_team_name",
+           "show_delete_member_confirm", "delete_member_email", "delete_member_team_id"]:
     if key not in st.session_state:
         st.session_state[key] = None if key != "signup_success" else False
 
@@ -214,6 +217,47 @@ with st.sidebar:
             
             # Team leden beheer
             st.subheader("👥 Teamleden Beheren")
+            
+            # Huidige teamleden ophalen en weergeven
+            team_members = supabase.table('team_members').select('*').eq('team_id', team['id']).execute()
+            if team_members.data:
+                st.write("Huidige teamleden:")
+                for member in team_members.data:
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(member['user_email'])
+                    with col2:
+                        if st.button("🗑️", key=f"delete_member_{member['id']}", help="Verwijder teamlid"):
+                            st.session_state.show_delete_member_confirm = True
+                            st.session_state.delete_member_email = member['user_email']
+                            st.session_state.delete_member_team_id = team['id']
+                            st.rerun()
+            
+            # Toon de bevestigingsdialoog voor het verwijderen van een teamlid
+            if st.session_state.get('show_delete_member_confirm'):
+                with member_modal.container():
+                    st.warning(f"Weet je zeker dat je het teamlid '{st.session_state.delete_member_email}' wilt verwijderen?")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Ja", key="confirm_delete_member"):
+                            try:
+                                # Verwijder het teamlid
+                                supabase.table('team_members').delete().eq('team_id', st.session_state.delete_member_team_id).eq('user_email', st.session_state.delete_member_email).execute()
+                                st.session_state.show_delete_member_confirm = False
+                                st.session_state.delete_member_email = None
+                                st.session_state.delete_member_team_id = None
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Kon teamlid niet verwijderen: {str(e)}")
+                    with col2:
+                        if st.button("Nee", key="cancel_delete_member"):
+                            st.session_state.show_delete_member_confirm = False
+                            st.session_state.delete_member_email = None
+                            st.session_state.delete_member_team_id = None
+                            member_modal.close()
+                            st.rerun()
+            
+            # Nieuw teamlid toevoegen
             new_member = st.text_input("Voeg teamlid toe (email)")
             if st.button("➕ Lid Toevoegen", key="add_member"):
                 try:

@@ -136,7 +136,7 @@ with st.sidebar:
                         'owner_id': st.session_state.user['id']
                     }).execute()
                     st.success("Team aangemaakt!")
-                    st.experimental_rerun()
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Kon team niet aanmaken: {str(e)}")
     
@@ -279,7 +279,7 @@ with tab1:
         col1, col2 = st.columns([1, 1])
         with col1:
             if st.button("Voeg toe"):
-                if naam and plaats:
+                if naam en plaats:
                     st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
                 else:
                     st.warning("Vul zowel locatienaam als plaats in.")

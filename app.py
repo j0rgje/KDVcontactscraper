@@ -27,6 +27,104 @@ from streamlit_modal import Modal
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
+# Initialize session state
+for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows", 
+           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten",
+           "email_verified"]:
+    if key not in st.session_state:
+        st.session_state[key] = None if key != "signup_success" else False
+
+# Supabase initialization
+SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Authentication check at the very start
+if not st.session_state.session:
+    st.title("Welkom bij Locatiemanager Finder")
+    st.warning("Log in of registreer om de app te gebruiken.")
+    
+    # Authentication UI
+    st.sidebar.title("Authenticatie")
+    action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
+    
+    if action == "Registreren":
+        st.subheader("Nieuw account aanmaken")
+        with st.form("signup_form"):  
+            email = st.text_input("E-mail (gebruikersnaam)")
+            password = st.text_input("Wachtwoord", type="password")
+            submit = st.form_submit_button("Account aanmaken")
+        if submit:
+            try:
+                res = supabase.auth.sign_up({
+                    "email": email,
+                    "password": password
+                })
+                if hasattr(res, 'error') and res.error:
+                    st.session_state.signup_error = res.error.message
+                else:
+                    st.session_state.signup_success = True
+                    st.session_state.signup_error = None
+                    if hasattr(res, 'session') and res.session:
+                        st.session_state["token"] = res.session.access_token
+            except Exception as e:
+                st.session_state.signup_error = str(e)
+                
+        if st.session_state.signup_error:
+            st.error(st.session_state.signup_error)
+        if st.session_state.signup_success:
+            st.success("✉️ Check je e-mail om je account te bevestigen!")
+            st.info("Na het verifiëren van je e-mail kun je inloggen.")
+                
+    else:  # Inloggen
+        st.subheader("Login")
+        with st.form("login_form"):  
+            email = st.text_input("E-mail")
+            password = st.text_input("Wachtwoord", type="password")
+            submit = st.form_submit_button("Inloggen")
+        if submit:
+            try:
+                res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                if res.user and res.session:
+                    st.session_state.session = res.session
+                    st.session_state.user = {"email": res.user.email, "id": res.user.id}
+                    st.session_state["token"] = res.session.access_token
+                    st.session_state.login_error = None
+                    st.rerun()
+                else:
+                    st.session_state.login_error = "Ongeldige inloggegevens. Controleer je e-mail en wachtwoord."
+            except Exception as e:
+                st.session_state.login_error = str(e)
+        
+        if st.session_state.login_error:
+            st.error(st.session_state.login_error)
+            
+    # Stop execution here for non-authenticated users
+    st.stop()
+
+# From here onwards, user is authenticated
+# Verify authentication using token
+if "token" in st.session_state:
+    try:
+        user = supabase.auth.get_user(st.session_state["token"])
+        if not user or not user.user:
+            st.error("Je sessie is verlopen. Log opnieuw in.")
+            st.session_state.session = None
+            st.session_state.user = None
+            if "token" in st.session_state:
+                del st.session_state["token"]
+            st.rerun()
+    except Exception:
+        st.error("Je sessie is verlopen. Log opnieuw in.")
+        st.session_state.session = None
+        st.session_state.user = None
+        if "token" in st.session_state:
+            del st.session_state["token"]
+        st.rerun()
+
+# Main UI starts here - only shown to authenticated users
+st.title("Kinderopvang Locatiemanager Scraper")
+
 # Get the current page from the URL using the new API
 if 'verified' in st.query_params:
     st.success("✅ Je e-mailadres is succesvol bevestigd! Je kunt nu inloggen met je geregistreerde e-mailadres en wachtwoord.")
@@ -120,85 +218,6 @@ st.markdown("""
     }
     </style>
     """, unsafe_allow_html=True)
-
-# Initialize session state
-for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows", 
-           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten",
-           "email_verified"]:
-    if key not in st.session_state:
-        st.session_state[key] = None if key != "signup_success" else False
-
-# Supabase initialization
-SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
-SUPABASE_KEY = st.secrets.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Authentication flow
-if not st.session_state.session:
-    st.sidebar.title("Authenticatie")
-    action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
-    
-    if action == "Registreren":
-        st.title("Nieuw account aanmaken")
-        with st.form("signup_form"):  
-            email = st.text_input("E-mail (gebruikersnaam)")
-            password = st.text_input("Wachtwoord", type="password")
-            submit = st.form_submit_button("Account aanmaken")
-        if submit:
-            try:
-                res = supabase.auth.sign_up({
-                    "email": email,
-                    "password": password
-                })
-                if hasattr(res, 'error') and res.error:
-                    st.session_state.signup_error = res.error.message
-                else:
-                    st.session_state.signup_success = True
-                    st.session_state.signup_error = None
-                    # Store the token in session state
-                    if hasattr(res, 'session') and res.session:
-                        st.session_state["token"] = res.session.access_token
-            except Exception as e:
-                st.session_state.signup_error = str(e)
-                
-    else:  # Inloggen
-        st.title("Login")
-        with st.form("login_form"):  
-            email = st.text_input("E-mail")
-            password = st.text_input("Wachtwoord", type="password")
-            submit = st.form_submit_button("Inloggen")
-        if submit:
-            try:
-                res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                if res.user and res.session:
-                    st.session_state.session = res.session
-                    st.session_state.user = {"email": res.user.email, "id": res.user.id}
-                    # Store the token in session state
-                    st.session_state["token"] = res.session.access_token
-                    st.session_state.login_error = None
-                    st.rerun()
-                else:
-                    st.session_state.login_error = "Ongeldige inloggegevens. Controleer je e-mail en wachtwoord."
-            except Exception as e:
-                st.session_state.login_error = str(e)
-
-# Verify authentication using token
-if "token" in st.session_state:
-    try:
-        user = supabase.auth.get_user(st.session_state["token"])
-        if user and user.user:
-            if not user.user.email_confirmed_at:
-                st.warning("Je e-mail adres is nog niet geverifieerd. Check je inbox voor de verificatie link.")
-            else:
-                st.success("✅ Je bent succesvol ingelogd!")
-    except Exception:
-        # Token is invalid or expired
-        if "token" in st.session_state:
-            del st.session_state["token"]
-        if "session" in st.session_state:
-            st.session_state.session = None
-        st.error("Je sessie is verlopen. Log opnieuw in.")
-        st.rerun()
 
 # Main UI Sidebar
 with st.sidebar:
@@ -502,25 +521,6 @@ def scrape_contactgegevens(url):
     except Exception as e:
         result['error'] = str(e)
     return result
-
-# Scraper UI
-if st.session_state.session:
-    # Logo weergave bovenaan de pagina
-    if st.session_state.selected_team and st.session_state.selected_team != "Persoonlijk":
-        team = next((t for t in st.session_state.teams if t['name'] == st.session_state.selected_team), None)
-        if team and team.get('logo_url'):
-            st.image(team.get('logo_url'), width=200)
-    
-    st.title("Kinderopvang Locatiemanager Scraper")
-
-# Tabs voor hoofdnavigatie
-tab1, tab2, tab3 = st.tabs(["Zoeken", "Geschiedenis", "Notities"])
-
-with tab1:
-    # Mode select
-    mode = st.radio("Invoermodus:", ["Bestand upload", "Handmatige invoer"])
-    input_df = pd.DataFrame()
-    if mode == "Bestand upload":
         uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
         if uploaded_file:
             input_df = pd.read_excel(uploaded_file)

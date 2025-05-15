@@ -138,23 +138,30 @@ if not st.session_state.session:
     st.sidebar.title("Authenticatie")
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
     
-    # Check voor email verificatie
-    params = dict(st.query_params)
-    if params.get('verified') == 'true':
-        st.success("✅ Je e-mailadres is succesvol bevestigd! Je kunt hieronder inloggen met je geregistreerde e-mailadres en wachtwoord.")
-        st.query_params.clear()
-    
-    # Check voor email verificatie status
-    try:
-        session = supabase.auth.get_session()
-        if session and session.access_token:
-            user = supabase.auth.get_user(session.access_token)
-            if user and user.user.email_confirmed_at:
-                st.success("✅ Je e-mailadres is succesvol bevestigd! Je kunt hieronder inloggen met je geregistreerde e-mailadres en wachtwoord.")
-    except Exception:
-        pass
-    
-    if action == "Inloggen":
+    if action == "Registreren":
+        st.title("Nieuw account aanmaken")
+        with st.form("signup_form"):  
+            email = st.text_input("E-mail (gebruikersnaam)")
+            password = st.text_input("Wachtwoord", type="password")
+            submit = st.form_submit_button("Account aanmaken")
+        if submit:
+            try:
+                res = supabase.auth.sign_up({
+                    "email": email,
+                    "password": password
+                })
+                if hasattr(res, 'error') and res.error:
+                    st.session_state.signup_error = res.error.message
+                else:
+                    st.session_state.signup_success = True
+                    st.session_state.signup_error = None
+                    # Store the token in session state
+                    if hasattr(res, 'session') and res.session:
+                        st.session_state["token"] = res.session.access_token
+            except Exception as e:
+                st.session_state.signup_error = str(e)
+                
+    else:  # Inloggen
         st.title("Login")
         with st.form("login_form"):  
             email = st.text_input("E-mail")
@@ -164,54 +171,34 @@ if not st.session_state.session:
             try:
                 res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                 if res.user and res.session:
-                    if res.user.email_confirmed_at or res.user.confirmed_at:
-                        st.session_state.session = res.session
-                        st.session_state.user = {"email": res.user.email, "id": res.user.id}
-                        st.session_state.login_error = None
-                        st.rerun()
-                    else:
-                        st.session_state.login_error = "Je e-mail adres is nog niet geverifieerd. Check je inbox voor de verificatie link."
+                    st.session_state.session = res.session
+                    st.session_state.user = {"email": res.user.email, "id": res.user.id}
+                    # Store the token in session state
+                    st.session_state["token"] = res.session.access_token
+                    st.session_state.login_error = None
+                    st.rerun()
                 else:
                     st.session_state.login_error = "Ongeldige inloggegevens. Controleer je e-mail en wachtwoord."
             except Exception as e:
-                if "Email not confirmed" in str(e):
-                    st.session_state.login_error = "Je e-mail adres is nog niet geverifieerd. Check je inbox voor de verificatie link."
-                else:
-                    st.session_state.login_error = f"Inloggen mislukt: {str(e)}"
-        
-        if st.session_state.login_error:
-            st.error(st.session_state.login_error)
-        st.stop()
-    else:  # Registreren
-        st.title("Nieuw account aanmaken")
-        with st.form("signup_form"):  
-            email = st.text_input("E-mail (gebruikersnaam)")
-            password = st.text_input("Wachtwoord", type="password")
-            submit = st.form_submit_button("Account aanmaken")
-        if submit:
-            try:
-                # Gebruik de Streamlit app URL als redirect_to
-                res = supabase.auth.sign_up({
-                    "email": email,
-                    "password": password,
-                    "options": {
-                        "email_redirect_to": STREAMLIT_APP_URL
-                    }
-                })
-                if hasattr(res, 'error') and res.error:
-                    st.session_state.signup_error = res.error.message
-                else:
-                    st.session_state.signup_success = True
-                    st.session_state.signup_error = None
-            except Exception as e:
-                st.session_state.signup_error = str(e)
+                st.session_state.login_error = str(e)
 
-        if st.session_state.signup_error:
-            st.error(st.session_state.signup_error)
-        if st.session_state.signup_success:
-            st.success("✉️ Check je e-mail om je account te bevestigen!")
-            st.info("Na het verifiëren van je e-mail word je automatisch teruggestuurd naar deze pagina waar je kunt inloggen.")
-        st.stop()
+# Verify authentication using token
+if "token" in st.session_state:
+    try:
+        user = supabase.auth.get_user(st.session_state["token"])
+        if user and user.user:
+            if not user.user.email_confirmed_at:
+                st.warning("Je e-mail adres is nog niet geverifieerd. Check je inbox voor de verificatie link.")
+            else:
+                st.success("✅ Je bent succesvol ingelogd!")
+    except Exception:
+        # Token is invalid or expired
+        if "token" in st.session_state:
+            del st.session_state["token"]
+        if "session" in st.session_state:
+            st.session_state.session = None
+        st.error("Je sessie is verlopen. Log opnieuw in.")
+        st.rerun()
 
 # Main UI Sidebar
 with st.sidebar:

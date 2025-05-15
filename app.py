@@ -93,19 +93,11 @@ if not st.session_state.session:
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
     
     # Check URL parameters voor verificatie
-    params = st.experimental_get_query_params()
-    
-    # Check verschillende verificatie parameters die Supabase kan sturen
-    is_verified = (
-        ('type' in params and params['type'][0] == 'signup') or
-        ('type' in params and params['type'][0] == 'recovery') or
-        ('verified' in params and params['verified'][0] == 'true')
-    )
-    
-    if is_verified:
-        st.success("✅ Je e-mail is geverifieerd! Je kunt nu inloggen.")
-        # Verwijder de verificatie parameters uit de URL
-        st.experimental_set_query_params()
+    # Vervang alle experimental query params met de nieuwe API
+    if st.query_params and 'type' in st.query_params:
+        if st.query_params['type'] == 'signup' or st.query_params['type'] == 'recovery':
+            st.success("✅ Je e-mail is geverifieerd! Je kunt nu inloggen.")
+            st.query_params.clear()  # Verwijder de verificatie parameters uit de URL
     
     if action == "Inloggen":
         st.title("Login")
@@ -475,7 +467,7 @@ if st.session_state.session:
     if st.session_state.selected_team and st.session_state.selected_team != "Persoonlijk":
         team = next((t for t in st.session_state.teams if t['name'] == st.session_state.selected_team), None)
         if team and team.get('logo_url'):
-            st.image(team['logo_url'], width=200)
+            st.image(team.get('logo_url'), width=200)
     
     st.title("Kinderopvang Locatiemanager Scraper")
 

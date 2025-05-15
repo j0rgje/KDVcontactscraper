@@ -96,55 +96,80 @@ if not st.session_state.session:
 # Main UI Sidebar Logout
 with st.sidebar:
     user_email = st.session_state.user.get('email', 'Onbekend') if st.session_state.user else 'Onbekend'
-    st.write(f"Ingelogd als: {user_email}")
     
-    # Team management sectie
-    st.subheader("Team Beheer")
-    if st.session_state.user:
-        # Haal teams op waar gebruiker lid van is
-        teams_response = supabase.table('teams').select('*').execute()
-        teams = teams_response.data if hasattr(teams_response, 'data') else []
-        st.session_state.teams = teams
+    # Settings expander met account info en team beheer
+    with st.expander("⚙️ Instellingen"):
+        st.write(f"📧 Account: {user_email}")
         
-        if teams:
-            team_names = [team['name'] for team in teams]
-            selected_team = st.selectbox("Selecteer Team", ["Persoonlijk"] + team_names)
-            st.session_state.selected_team = selected_team
+        # Team management sectie
+        st.subheader("🏢 Team Beheer")
+        if st.session_state.user:
+            # Haal teams op waar gebruiker lid van is
+            teams_response = supabase.table('teams').select('*').execute()
+            teams = teams_response.data if hasattr(teams_response, 'data') else []
+            st.session_state.teams = teams
             
-            if selected_team != "Persoonlijk":
-                team = next(team for team in teams if team['name'] == selected_team)
-                if team.get('owner_id') == st.session_state.user['id']:
-                    with st.expander("Team Beheer"):
-                        new_member = st.text_input("Voeg teamlid toe (email)")
-                        if st.button("Toevoegen"):
-                            try:
-                                supabase.table('team_members').insert({
-                                    'team_id': team['id'],
-                                    'user_email': new_member
-                                }).execute()
-                                st.success(f"Gebruiker {new_member} toegevoegd aan team!")
-                            except Exception as e:
-                                st.error(f"Kon gebruiker niet toevoegen: {str(e)}")
+            if teams:
+                team_names = [team['name'] for team in teams]
+                selected_team = st.selectbox("Selecteer Team", ["Persoonlijk"] + team_names)
+                st.session_state.selected_team = selected_team
+                
+                if selected_team != "Persoonlijk":
+                    team = next(team for team in teams if team['name'] == selected_team)
+                    
+                    # Team beheer opties voor team eigenaar
+                    if team.get('owner_id') == st.session_state.user['id']:
+                        st.markdown("---")
+                        st.markdown("##### Team Instellingen")
+                        
+                        # Team leden beheer
+                        with st.expander("👥 Teamleden Beheren"):
+                            new_member = st.text_input("Voeg teamlid toe (email)")
+                            if st.button("➕ Lid Toevoegen", key="add_member"):
+                                try:
+                                    supabase.table('team_members').insert({
+                                        'team_id': team['id'],
+                                        'user_email': new_member
+                                    }).execute()
+                                    st.success(f"Gebruiker {new_member} toegevoegd aan team!")
+                                except Exception as e:
+                                    st.error(f"Kon gebruiker niet toevoegen: {str(e)}")
+                        
+                        # Team verwijderen optie
+                        with st.expander("⚠️ Gevaarlijke Zone"):
+                            st.warning("Let op: Deze actie kan niet ongedaan worden gemaakt!")
+                            if st.button("🗑️ Team Verwijderen", type="primary"):
+                                try:
+                                    # Verwijder eerst alle team members
+                                    supabase.table('team_members').delete().eq('team_id', team['id']).execute()
+                                    # Verwijder dan het team zelf
+                                    supabase.table('teams').delete().eq('id', team['id']).execute()
+                                    st.success("Team succesvol verwijderd!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Kon team niet verwijderen: {str(e)}")
+            
+            # Team aanmaken
+            st.markdown("---")
+            with st.expander("➕ Nieuw Team Aanmaken"):
+                new_team_name = st.text_input("Team naam")
+                if st.button("Team Aanmaken"):
+                    try:
+                        supabase.table('teams').insert({
+                            'name': new_team_name,
+                            'owner_id': st.session_state.user['id']
+                        }).execute()
+                        st.success("Team aangemaakt!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Kon team niet aanmaken: {str(e)}")
         
-        # Team aanmaken
-        with st.expander("Nieuw Team Aanmaken"):
-            new_team_name = st.text_input("Team naam")
-            if st.button("Team Aanmaken"):
-                try:
-                    supabase.table('teams').insert({
-                        'name': new_team_name,
-                        'owner_id': st.session_state.user['id']
-                    }).execute()
-                    st.success("Team aangemaakt!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Kon team niet aanmaken: {str(e)}")
-    
-    if st.button("Log uit"):
-        supabase.auth.sign_out()
-        for key in ['session','user','login_error','signup_error','signup_success','selected_team']:
-            st.session_state[key] = None
-        st.rerun()
+        st.markdown("---")
+        if st.button("🚪 Log uit"):
+            supabase.auth.sign_out()
+            for key in ['session','user','login_error','signup_error','signup_success','selected_team']:
+                st.session_state[key] = None
+            st.rerun()
 
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
@@ -279,7 +304,7 @@ with tab1:
         col1, col2 = st.columns([1, 1])
         with col1:
             if st.button("Voeg toe"):
-                if naam and plaats:
+                if naam en plaats:
                     st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
                 else:
                     st.warning("Vul zowel locatienaam als plaats in.")

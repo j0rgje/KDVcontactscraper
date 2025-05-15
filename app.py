@@ -65,9 +65,7 @@ st.markdown("""
 
 # Initialize session state
 for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows", 
-           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten",
-           "show_delete_confirm", "delete_team_id", "delete_team_name",
-           "show_delete_member_confirm", "delete_member_email", "delete_member_team_id"]:
+           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten"]:
     if key not in st.session_state:
         st.session_state[key] = None if key != "signup_success" else False
 
@@ -93,6 +91,22 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 if not st.session_state.session:
     st.sidebar.title("Authenticatie")
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
+    
+    # Check URL parameters voor verificatie
+    params = st.experimental_get_query_params()
+    
+    # Check verschillende verificatie parameters die Supabase kan sturen
+    is_verified = (
+        ('type' in params and params['type'][0] == 'signup') or
+        ('type' in params and params['type'][0] == 'recovery') or
+        ('verified' in params and params['verified'][0] == 'true')
+    )
+    
+    if is_verified:
+        st.success("✅ Je e-mail is geverifieerd! Je kunt nu inloggen.")
+        # Verwijder de verificatie parameters uit de URL
+        st.experimental_set_query_params()
+    
     if action == "Inloggen":
         st.title("Login")
         with st.form("login_form"):  
@@ -103,15 +117,21 @@ if not st.session_state.session:
             try:
                 res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                 if res.user and res.session:
-                    st.session_state.session = res.session
-                    st.session_state.user = {"email": res.user.email, "id": res.user.id}
-                    st.session_state.login_error = None
-                    st.rerun()
+                    if res.user.email_confirmed_at or res.user.confirmed_at:
+                        st.session_state.session = res.session
+                        st.session_state.user = {"email": res.user.email, "id": res.user.id}
+                        st.session_state.login_error = None
+                        st.rerun()
+                    else:
+                        st.session_state.login_error = "Je e-mail adres is nog niet geverifieerd. Check je inbox voor de verificatie link."
                 else:
                     st.session_state.login_error = "Ongeldige inloggegevens. Controleer je e-mail en wachtwoord."
             except Exception as e:
-                st.session_state.login_error = f"Inloggen mislukt: {str(e)}"
-                
+                if "Email not confirmed" in str(e):
+                    st.session_state.login_error = "Je e-mail adres is nog niet geverifieerd. Check je inbox voor de verificatie link."
+                else:
+                    st.session_state.login_error = f"Inloggen mislukt: {str(e)}"
+        
         if st.session_state.login_error:
             st.error(st.session_state.login_error)
         st.stop()
@@ -122,18 +142,28 @@ if not st.session_state.session:
             password = st.text_input("Wachtwoord", type="password")
             submit = st.form_submit_button("Account aanmaken")
         if submit:
-            res = supabase.auth.sign_up({"email": email, "password": password})
-            err = getattr(res, 'error', None)
-            if err:
-                st.session_state.signup_error = err.message
-            else:
-                st.session_state.signup_success = True
-                st.session_state.signup_error = None
-                components.html("<script>window.location.href=window.location.href;</script>", height=0)
+            try:
+                # Gebruik de Streamlit app URL als redirect_to
+                res = supabase.auth.sign_up({
+                    "email": email,
+                    "password": password,
+                    "options": {
+                        "email_redirect_to": "https://kdvcontactscraper-bexaokddvtospg8sthcwp5.streamlit.app/"
+                    }
+                })
+                if hasattr(res, 'error') and res.error:
+                    st.session_state.signup_error = res.error.message
+                else:
+                    st.session_state.signup_success = True
+                    st.session_state.signup_error = None
+            except Exception as e:
+                st.session_state.signup_error = str(e)
+
         if st.session_state.signup_error:
             st.error(st.session_state.signup_error)
         if st.session_state.signup_success:
-            st.success("Registratie gestart! Controleer je e-mail voor verificatie.")
+            st.success("✉️ Check je e-mail om je account te bevestigen!")
+            st.info("Na het verifiëren van je e-mail word je automatisch teruggestuurd naar deze pagina waar je kunt inloggen.")
         st.stop()
 
 # Main UI Sidebar

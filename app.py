@@ -27,19 +27,14 @@ from streamlit_modal import Modal
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
-# Get the current page from the URL
-current_page = st.experimental_get_query_params().get('page', ['main'])[0]
-
-if current_page == 'emailconfirmation':
+# Get the current page from the URL using the new API
+if 'verified' in st.query_params:
     st.success("✅ Je e-mailadres is succesvol bevestigd! Je kunt nu inloggen met je geregistreerde e-mailadres en wachtwoord.")
-    # Redirect to main page after 3 seconds
-    st.markdown("""
-        <meta http-equiv="refresh" content="3;url=/">
-    """, unsafe_allow_html=True)
-    st.stop()
+    st.query_params.clear()
+    st.rerun()
 
 # Generate Streamlit URL for email verification
-STREAMLIT_APP_URL = "https://kdvcontactscraper-bexaokddvtospg8sthcwp5.streamlit.app/emailconfirmation"
+STREAMLIT_APP_URL = "https://kdvcontactscraper-bexaokddvtospg8sthcwp5.streamlit.app"
 
 # Add JavaScript to check for email verification
 st.markdown("""

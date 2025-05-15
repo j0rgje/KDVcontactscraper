@@ -27,57 +27,88 @@ from streamlit_modal import Modal
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
+# Initialize modal voor team verwijderen en teamlid verwijderen
+modal = Modal("Team verwijderen", key="delete_modal")
+member_modal = Modal("Teamlid verwijderen", key="delete_member_modal")
+
+# Custom CSS voor de pop-up dialog
+st.markdown("""
+    <style>
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5);
+        z-index: 1000;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+    .modal-content {
+        background-color: white;
+        padding: 20px;
+        border-radius: 5px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        width: 400px;
+        text-align: center;
+    }
+    .modal-buttons {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 20px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 # Initialize session state
 for key in ["session", "user", "login_error", "signup_error", "signup_success", "manual_rows", 
-           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten",
-           "email_verified"]:
+           "selected_team", "user_role", "search_history", "notes", "teams", "scraping_in_progress", "resultaten"]:
     if key not in st.session_state:
         st.session_state[key] = None if key != "signup_success" else False
+
+if st.session_state.manual_rows is None:
+    st.session_state.manual_rows = []
+if st.session_state.search_history is None:
+    st.session_state.search_history = []
+if st.session_state.notes is None:
+    st.session_state.notes = {}
+if st.session_state.teams is None:
+    st.session_state.teams = []
+if st.session_state.scraping_in_progress is None:
+    st.session_state.scraping_in_progress = False
+if st.session_state.resultaten is None:
+    st.session_state.resultaten = []
 
 # Supabase initialization
 SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
 SUPABASE_KEY = st.secrets.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Authentication check at the very start
+# Authentication flow
 if not st.session_state.session:
-    st.title("Welkom bij Locatiemanager Finder")
-    st.warning("Log in of registreer om de app te gebruiken.")
-    
-    # Authentication UI
     st.sidebar.title("Authenticatie")
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
     
-    if action == "Registreren":
-        st.subheader("Nieuw account aanmaken")
-        with st.form("signup_form"):  
-            email = st.text_input("E-mail (gebruikersnaam)")
-            password = st.text_input("Wachtwoord", type="password")
-            submit = st.form_submit_button("Account aanmaken")
-        if submit:
-            try:
-                res = supabase.auth.sign_up({
-                    "email": email,
-                    "password": password
-                })
-                if hasattr(res, 'error') and res.error:
-                    st.session_state.signup_error = res.error.message
-                else:
-                    st.session_state.signup_success = True
-                    st.session_state.signup_error = None
-                    if hasattr(res, 'session') and res.session:
-                        st.session_state["token"] = res.session.access_token
-            except Exception as e:
-                st.session_state.signup_error = str(e)
-                
-        if st.session_state.signup_error:
-            st.error(st.session_state.signup_error)
-        if st.session_state.signup_success:
-            st.success("✉️ Check je e-mail om je account te bevestigen!")
-            st.info("Na het verifiëren van je e-mail kun je inloggen.")
-                
-    else:  # Inloggen
-        st.subheader("Login")
+    # Check URL parameters voor verificatie
+    params = st.query_params
+    
+    # Check voor succesvol geverifieerd emailadres
+    is_verified = (
+        'access_token' in params and 
+        'type' in params and 
+        params['type'] == 'signup'
+    )
+    
+    if is_verified:
+        st.success("✅ Je e-mailadres is succesvol bevestigd! Je kunt hieronder inloggen met je geregistreerde e-mailadres en wachtwoord.")
+        # We verwijderen de parameters pas na het tonen van de melding
+        st.query_params.clear()
+    
+    if action == "Inloggen":
+        st.title("Login")
         with st.form("login_form"):  
             email = st.text_input("E-mail")
             password = st.text_input("Wachtwoord", type="password")
@@ -86,48 +117,54 @@ if not st.session_state.session:
             try:
                 res = supabase.auth.sign_in_with_password({"email": email, "password": password})
                 if res.user and res.session:
-                    st.session_state.session = res.session
-                    st.session_state.user = {"email": res.user.email, "id": res.user.id}
-                    st.session_state["token"] = res.session.access_token
-                    st.session_state.login_error = None
-                    st.rerun()
+                    if res.user.email_confirmed_at or res.user.confirmed_at:
+                        st.session_state.session = res.session
+                        st.session_state.user = {"email": res.user.email, "id": res.user.id}
+                        st.session_state.login_error = None
+                        st.rerun()
+                    else:
+                        st.session_state.login_error = "Je e-mail adres is nog niet geverifieerd. Check je inbox voor de verificatie link."
                 else:
                     st.session_state.login_error = "Ongeldige inloggegevens. Controleer je e-mail en wachtwoord."
             except Exception as e:
-                st.session_state.login_error = str(e)
+                if "Email not confirmed" in str(e):
+                    st.session_state.login_error = "Je e-mail adres is nog niet geverifieerd. Check je inbox voor de verificatie link."
+                else:
+                    st.session_state.login_error = f"Inloggen mislukt: {str(e)}"
         
         if st.session_state.login_error:
             st.error(st.session_state.login_error)
-    
-    # Stop execution here for non-authenticated users
-    st.stop()
+        st.stop()
+    else:  # Registreren
+        st.title("Nieuw account aanmaken")
+        with st.form("signup_form"):  
+            email = st.text_input("E-mail (gebruikersnaam)")
+            password = st.text_input("Wachtwoord", type="password")
+            submit = st.form_submit_button("Account aanmaken")
+        if submit:
+            try:
+                # Gebruik de Streamlit app URL als redirect_to
+                res = supabase.auth.sign_up({
+                    "email": email,
+                    "password": password,
+                    "options": {
+                        "email_redirect_to": "https://kdvcontactscraper-bexaokddvtospg8sthcwp5.streamlit.app/"
+                    }
+                })
+                if hasattr(res, 'error') and res.error:
+                    st.session_state.signup_error = res.error.message
+                else:
+                    st.session_state.signup_success = True
+                    st.session_state.signup_error = None
+            except Exception as e:
+                st.session_state.signup_error = str(e)
 
-# From here onwards, user is authenticated
-# Verify authentication using token
-if "token" in st.session_state:
-    try:
-        user = supabase.auth.get_user(st.session_state["token"])
-        if not user or not user.user:
-            st.error("Je sessie is verlopen. Log opnieuw in.")
-            st.session_state.session = None
-            st.session_state.user = None
-            if "token" in st.session_state:
-                del st.session_state["token"]
-            st.rerun()
-    except Exception:
-        st.error("Je sessie is verlopen. Log opnieuw in.")
-        st.session_state.session = None
-        st.session_state.user = None
-        if "token" in st.session_state:
-            del st.session_state["token"]
-        st.rerun()
-
-# Main UI starts here - only shown to authenticated users
-st.title("Kinderopvang Locatiemanager Scraper")
-
-# Initialize modal voor team verwijderen en teamlid verwijderen
-modal = Modal("Team verwijderen", key="delete_modal")
-member_modal = Modal("Teamlid verwijderen", key="delete_member_modal")
+        if st.session_state.signup_error:
+            st.error(st.session_state.signup_error)
+        if st.session_state.signup_success:
+            st.success("✉️ Check je e-mail om je account te bevestigen!")
+            st.info("Na het verifiëren van je e-mail word je automatisch teruggestuurd naar deze pagina waar je kunt inloggen.")
+        st.stop()
 
 # Main UI Sidebar
 with st.sidebar:
@@ -139,249 +176,186 @@ with st.sidebar:
         for key in ['session','user','login_error','signup_error','signup_success','selected_team']:
             st.session_state[key] = None
         st.rerun()
-
-# Create tabs
-tab1, tab2, tab3 = st.tabs(["Locaties Zoeken", "Zoekgeschiedenis", "Notities"])
-
-with tab1:
-    # Upload mode selection
-    mode = st.radio("Modus", ["Excel upload", "Handmatige invoer"])
-    input_df = pd.DataFrame()  # Initialize empty DataFrame
     
-    if mode == "Excel upload":
-        uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
-        if uploaded_file:
-            input_df = pd.read_excel(uploaded_file)
-            st.write("### Ingelezen data", input_df.head())
-    elif mode == "Handmatige invoer":
-        if 'manual_rows' not in st.session_state:
-            st.session_state.manual_rows = []
-            
-        naam = st.text_input("Locatienaam")
-        plaats = st.text_input("Plaats")
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.button("Voeg toe"):
-                if naam and plaats:
-                    st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
-                else:
-                    st.warning("Vul zowel locatienaam als plaats in.")
+    # Settings sectie
+    st.subheader("⚙️ Instellingen")
+    st.write(f"📧 Account: {user_email}")
+    
+    # Team management sectie
+    st.markdown("---")
+    st.subheader("🏢 Team Beheer")
+    if st.session_state.user:
+        # Haal teams op waar gebruiker lid van is
+        teams_response = supabase.table('teams').select('*').execute()
+        teams = teams_response.data if hasattr(teams_response, 'data') else []
+        st.session_state.teams = teams
         
-        if st.session_state.manual_rows:
-            input_df = pd.DataFrame(st.session_state.manual_rows)
-            st.write("### Handmatige invoer", input_df)
+        if teams:
+            # Maak kolommen voor team selectie en verwijder knop
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                selected_team = st.selectbox("Selecteer Team", ["Persoonlijk"] + [team['name'] for team in teams])
+                st.session_state.selected_team = selected_team
             
-            # Verwijder optie toevoegen
-            with st.expander("Verwijder invoer"):
-                te_verwijderen = st.multiselect(
-                    "Selecteer rijen om te verwijderen",
-                    options=range(len(st.session_state.manual_rows)),
-                    format_func=lambda x: f"{st.session_state.manual_rows[x]['locatienaam']} - {st.session_state.manual_rows[x]['plaats']}"
-                )
-                if st.button("Verwijder geselecteerde"):
-                    for index in sorted(te_verwijderen, reverse=True):
-                        st.session_state.manual_rows.pop(index)
+            # Toon verwijder knop alleen als een team is geselecteerd (niet voor "Persoonlijk")
+            if selected_team != "Persoonlijk":
+                team = next(team for team in teams if team['name'] == selected_team)
+                
+                # Alleen team eigenaar kan verwijderen
+                if team.get('owner_id') == st.session_state.user['id']:
+                    with col2:
+                        if st.button("🗑️", key=f"delete_{team['id']}", help="Verwijder team"):
+                            st.session_state.show_delete_confirm = True
+                            st.session_state.delete_team_id = team['id']
+                            st.session_state.delete_team_name = selected_team
+                            st.rerun()
+
+    # Toon de bevestigingsdialoog met modal
+    if st.session_state.get('show_delete_confirm'):
+        with modal.container():
+            st.warning(f"Weet je zeker dat je het team '{st.session_state.delete_team_name}' wilt verwijderen?")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Ja", key="confirm_delete"):
+                    try:
+                        team_id = st.session_state.delete_team_id
+                        # Verwijder eerst alle team members
+                        supabase.table('team_members').delete().eq('team_id', team_id).execute()
+                        # Verwijder dan het team zelf
+                        supabase.table('teams').delete().eq('id', team_id).execute()
+                        st.session_state.show_delete_confirm = False
+                        st.session_state.delete_team_id = None
+                        st.session_state.delete_team_name = None
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Kon team niet verwijderen: {str(e)}")
+            with col2:
+                if st.button("Nee", key="cancel_delete"):
+                    st.session_state.show_delete_confirm = False
+                    st.session_state.delete_team_id = None
+                    st.session_state.delete_team_name = None
+                    modal.close()
                     st.rerun()
 
-    # Start scraping
-    if not input_df.empty:
-        start_button = st.button("Start scraping", disabled=st.session_state.scraping_in_progress)
-        if start_button:
-            st.session_state.scraping_in_progress = True
-            st.rerun()
-        
-        if st.session_state.scraping_in_progress:
-            with st.spinner('Bezig met scrapen van locaties... Dit kan enkele minuten duren.'):
-                st.session_state.resultaten = []
-                progress = st.progress(0)
-                
-                async def process_all_locations():
-                    for idx, row in input_df.iterrows():
-                        naam, plaats = str(row['locatienaam']), str(row['plaats'])
-                        
-                        # Try SerpAPI first, then fallback
-                        site = zoek_website_bij_naam(naam, plaats)
-                        if not site:
-                            site = await backup_search(naam, plaats)
-                        
-                        if site:
-                            data = await scrape_deep(site)
-                        else:
-                            data = {'error': 'Geen website gevonden'}
-
-                        resultaat = {
-                            'locatienaam': naam,
-                            'plaats': plaats,
-                            'website': site,
-                            'emails': ", ".join(data.get('emails', [])),
-                            'telefoons': ", ".join(data.get('telefoons', [])),
-                            'adressen': ", ".join(data.get('adressen', [])),
-                            'managers': " | ".join(data.get('managers', [])),
-                            'error': data.get('error', '')
-                        }
-                        
-                        # Save to history in Supabase
-                        if st.session_state.user:
+# Vervolg van de sidebar code
+with st.sidebar:
+    if st.session_state.user and st.session_state.selected_team != "Persoonlijk":
+        team = next((t for t in st.session_state.teams if t['name'] == st.session_state.selected_team), None)
+        if team and team.get('owner_id') == st.session_state.user['id']:
+            st.markdown("---")
+            st.markdown("##### Team Instellingen")
+            
+            # Team leden beheer
+            st.subheader("👥 Teamleden Beheren")
+            
+            # Huidige teamleden ophalen en weergeven
+            team_members = supabase.table('team_members').select('*').eq('team_id', team['id']).execute()
+            if team_members.data:
+                st.write("Huidige teamleden:")
+                for member in team_members.data:
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(member['user_email'])
+                    with col2:
+                        if st.button("🗑️", key=f"delete_member_{member['id']}", help="Verwijder teamlid"):
+                            st.session_state.show_delete_member_confirm = True
+                            st.session_state.delete_member_email = member['user_email']
+                            st.session_state.delete_member_team_id = team['id']
+                            st.rerun()
+            
+            # Toon de bevestigingsdialoog voor het verwijderen van een teamlid
+            if st.session_state.get('show_delete_member_confirm'):
+                with member_modal.container():
+                    st.warning(f"Weet je zeker dat je het teamlid '{st.session_state.delete_member_email}' wilt verwijderen?")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Ja", key="confirm_delete_member"):
                             try:
-                                supabase.table('search_history').insert({
-                                    'user_id': st.session_state.user['id'],
-                                    'search_data': resultaat,
-                                    'timestamp': datetime.now().isoformat()
-                                }).execute()
+                                # Verwijder het teamlid
+                                supabase.table('team_members').delete().eq('team_id', st.session_state.delete_member_team_id).eq('user_email', st.session_state.delete_member_email).execute()
+                                st.session_state.show_delete_member_confirm = False
+                                st.session_state.delete_member_email = None
+                                st.session_state.delete_member_team_id = None
+                                st.rerun()
                             except Exception as e:
-                                st.warning(f"Kon geschiedenis niet opslaan: {str(e)}")
-                        
-                        st.session_state.resultaten.append(resultaat)
-                        progress.progress((idx+1)/len(input_df))
-
-                # Run async scraping
-                asyncio.run(process_all_locations())
-                st.session_state.scraping_in_progress = False
-                st.success('Scraping voltooid!')
-        
-        # Show results
-        if st.session_state.resultaten:
-            res_df = pd.DataFrame(st.session_state.resultaten)
-            st.subheader("Resultaten")
-            st.dataframe(res_df)
+                                st.error(f"Kon teamlid niet verwijderen: {str(e)}")
+                    with col2:
+                        if st.button("Nee", key="cancel_delete_member"):
+                            st.session_state.show_delete_member_confirm = False
+                            st.session_state.delete_member_email = None
+                            st.session_state.delete_member_team_id = None
+                            member_modal.close()
+                            st.rerun()
             
-            # Export and visualizations
-            nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
-            buf_xlsx = BytesIO()
-            res_df.to_excel(buf_xlsx, index=False)
-            buf_xlsx.seek(0)
-            st.download_button("Download XLSX", data=buf_xlsx,
-                               file_name=f"locatiemanager-gegevens-{nu}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            st.download_button("Download CSV", data=res_df.to_csv(index=False).encode('utf-8'),
-                               file_name=f"locatiemanager-gegevens-{nu}.csv",
-                               mime="text/csv")
+            # Nieuw teamlid toevoegen
+            new_member = st.text_input("Voeg teamlid toe (email)")
+            if st.button("➕ Lid Toevoegen", key="add_member"):
+                try:
+                    supabase.table('team_members').insert({
+                        'team_id': team['id'],
+                        'user_email': new_member
+                    }).execute()
+                    st.success(f"Gebruiker {new_member} toegevoegd aan team!")
+                except Exception as e:
+                    st.error(f"Kon gebruiker niet toevoegen: {str(e)}")
             
-            # Generate PDF
-            buf_pdf = BytesIO()
-            doc = SimpleDocTemplate(buf_pdf, pagesize=letter)
-            data_pdf = [res_df.columns.tolist()] + res_df.values.tolist()
-            table = Table(data_pdf)
-            style = TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ])
-            table.setStyle(style)
-            doc.build([table])
-            buf_pdf.seek(0)
-            st.download_button("Download PDF", data=buf_pdf,
-                               file_name=f"locatiemanager-gegevens-{nu}.pdf",
-                               mime="application/pdf")
+            # Logo beheer
+            st.markdown("---")
+            st.subheader("🖼️ Team Logo")
+            uploaded_file = st.file_uploader("Upload team logo (PNG, JPG)", type=['png', 'jpg', 'jpeg'])
+            if uploaded_file is not None:
+                try:
+                    # Open en resize het logo
+                    image = Image.open(uploaded_file)
+                    # Behoud aspect ratio en maak max 200px breed
+                    max_width = 200
+                    ratio = max_width / image.size[0]
+                    new_size = (max_width, int(image.size[1] * ratio))
+                    image = image.resize(new_size, Image.LANCZOS)
+                    
+                    # Converteer naar base64
+                    buffered = io.BytesIO()
+                    image.save(buffered, format="PNG")
+                    img_str = base64.b64encode(buffered.getvalue()).decode()
+                    img_data = f"data:image/png;base64,{img_str}"
+                    
+                    # Update het logo in de database
+                    supabase.table('teams').update({
+                        'logo_url': img_data
+                    }).eq('id', team['id']).execute()
+                    
+                    st.success("Logo succesvol geüpload!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Kon logo niet uploaden: {str(e)}")
             
-            # Dashboard
-            st.header("Dashboard & Visualisaties")
-            totaal = len(res_df)
-            succes = res_df['error'].eq('').sum()
-            fouten = totaal - succes
-            st.metric("Totaal locaties", totaal)
-            st.metric("Succesvolle locaties", succes)
-            st.metric("Fouten", fouten)
-            
-            # Pie chart
-            df_vis = res_df.copy()
-            df_vis['Status'] = df_vis['error'].apply(lambda x: 'Ok' if x == '' else 'Error')
-            pie = alt.Chart(df_vis).mark_arc().encode(
-                theta=alt.Theta(field='count()', type='quantitative'),
-                color='Status'
-            )
-            st.altair_chart(pie, use_container_width=True)
-
-with tab2:
-    st.header("Zoekgeschiedenis")
-    # Haal geschiedenis op uit Supabase
-    history_response = supabase.table('search_history')\
-        .select('*')\
-        .eq('user_id', st.session_state.user['id'])\
-        .order('timestamp', desc=True)\
-        .execute()
-    
-    if history_response.data:
-        history_df = pd.DataFrame([
-            {
-                'timestamp': h['timestamp'],
-                **h['search_data']
-            } for h in history_response.data
-        ])
+            if team.get('logo_url'):
+                if st.button("🗑️ Verwijder Logo"):
+                    try:
+                        supabase.table('teams').update({
+                            'logo_url': None
+                        }).eq('id', team['id']).execute()
+                        st.success("Logo verwijderd!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Kon logo niet verwijderen: {str(e)}")
         
-        # Filter opties
-        col1, col2 = st.columns(2)
-        with col1:
-            filter_date = st.date_input("Filter op datum", value=None)
-        with col2:
-            filter_plaats = st.selectbox("Filter op plaats", 
-                                       ["Alle"] + list(history_df['plaats'].unique()))
-        
-        # Pas filters toe
-        if filter_date:
-            history_df = history_df[pd.to_datetime(history_df['timestamp']).dt.date == filter_date]
-        if filter_plaats != "Alle":
-            history_df = history_df[history_df['plaats'] == filter_plaats]
-        
-        # Toon geschiedenis
-        st.dataframe(history_df)
-        
-        # Export geschiedenis
-        if st.button("Exporteer Geschiedenis"):
-            nu = datetime.now().strftime('%Y-%m-%d-%H-%M')
-            buf_xlsx = BytesIO()
-            history_df.to_excel(buf_xlsx, index=False)
-            buf_xlsx.seek(0)
-            st.download_button("Download Geschiedenis (XLSX)", 
-                             data=buf_xlsx,
-                             file_name=f"zoekgeschiedenis-{nu}.xlsx",
-                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    else:
-        st.info("Nog geen zoekgeschiedenis beschikbaar")
-
-with tab3:
-    st.header("Notities")
+        # Team aanmaken
+        st.markdown("---")
+        st.subheader("➕ Nieuw Team")
+        new_team_name = st.text_input("Team naam")
+        if st.button("Team Aanmaken"):
+            try:
+                supabase.table('teams').insert({
+                    'name': new_team_name,
+                    'owner_id': st.session_state.user['id']
+                }).execute()
+                st.success("Team aangemaakt!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Kon team niet aanmaken: {str(e)}")
     
-    # Haal bestaande notities op
-    notes_response = supabase.table('notes')\
-        .select('*')\
-        .eq('user_id', st.session_state.user['id'])\
-        .execute()
-    
-    # Converteer naar dict voor snelle lookup
-    notes_dict = {note['locatie_id']: note for note in notes_response.data} if notes_response.data else {}
-    
-    # Toon notities voor laatste zoekresultaten
-    if st.session_state.resultaten:
-        for idx, res in enumerate(st.session_state.resultaten):
-            with st.expander(f"{res['locatienaam']} - {res['plaats']}"):
-                locatie_id = f"{res['locatienaam']}_{res['plaats']}"
-                existing_note = notes_dict.get(locatie_id, {}).get('content', '')
-                new_note = st.text_area("Notitie", value=existing_note, key=f"note_{idx}")
-                
-                if new_note != existing_note:
-                    if st.button("Opslaan", key=f"save_{idx}"):
-                        try:
-                            if locatie_id in notes_dict:
-                                # Update bestaande notitie
-                                supabase.table('notes')\
-                                    .update({'content': new_note})\
-                                    .eq('locatie_id', locatie_id)\
-                                    .execute()
-                            else:
-                                # Maak nieuwe notitie
-                                supabase.table('notes')\
-                                    .insert({
-                                        'user_id': st.session_state.user['id'],
-                                        'locatie_id': locatie_id,
-                                        'content': new_note
-                                    })\
-                                    .execute()
-                            st.success("Notitie opgeslagen!")
-                        except Exception as e:
-                            st.error(f"Kon notitie niet opslaan: {str(e)}")
-    else:
-        st.info("Zoek eerst naar locaties om notities toe te voegen")
+    st.markdown("---")
 
 # SerpAPI-key uit secrets
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY")
@@ -494,6 +468,25 @@ def scrape_contactgegevens(url):
     except Exception as e:
         result['error'] = str(e)
     return result
+
+# Scraper UI
+if st.session_state.session:
+    # Logo weergave bovenaan de pagina
+    if st.session_state.selected_team and st.session_state.selected_team != "Persoonlijk":
+        team = next((t for t in st.session_state.teams if t['name'] == st.session_state.selected_team), None)
+        if team and team.get('logo_url'):
+            st.image(team.get('logo_url'), width=200)
+    
+    st.title("Kinderopvang Locatiemanager Scraper")
+
+# Tabs voor hoofdnavigatie
+tab1, tab2, tab3 = st.tabs(["Zoeken", "Geschiedenis", "Notities"])
+
+with tab1:
+    # Mode select
+    mode = st.radio("Invoermodus:", ["Bestand upload", "Handmatige invoer"])
+    input_df = pd.DataFrame()
+    if mode == "Bestand upload":
         uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
         if uploaded_file:
             input_df = pd.read_excel(uploaded_file)

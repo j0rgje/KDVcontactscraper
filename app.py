@@ -273,7 +273,7 @@ with tab1:
         naam = st.text_input("Locatienaam")
         plaats = st.text_input("Plaats")
         if st.button("Voeg toe"):
-            if naam en plaats:
+            if naam and plaats:
                 st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
             else:
                 st.warning("Vul zowel locatienaam als plaats in.")

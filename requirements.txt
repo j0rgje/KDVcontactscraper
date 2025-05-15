@@ -10,3 +10,4 @@ authlib
 altair
 supabase
 reportlab
+aiohttp

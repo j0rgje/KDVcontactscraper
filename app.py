@@ -27,18 +27,27 @@ from streamlit_modal import Modal
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
-# Add JavaScript to check hash parameters
+# Generate Streamlit URL for email verification
+STREAMLIT_APP_URL = "https://kdvcontactscraper-bexaokddvtospg8sthcwp5.streamlit.app"
+
+# Add JavaScript to check for email verification
 st.markdown("""
 <script>
-    window.addEventListener('load', function() {
-        const hash = window.location.hash.substring(1);
-        const params = new URLSearchParams(hash);
-        if (params.get('type') === 'signup' && params.get('access_token')) {
-            const currentUrl = new URL(window.location.href.split('#')[0]);
-            currentUrl.searchParams.set('verified', 'true');
-            window.location.href = currentUrl.toString();
+    // Function to check email verification status
+    function checkEmailVerification() {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('verified') === 'true') {
+            localStorage.setItem('email_verified', 'true');
+            // Remove verification parameter from URL
+            const newUrl = new URL(window.location.href);
+            newUrl.searchParams.delete('verified');
+            window.history.replaceState({}, '', newUrl);
+            window.location.reload();
         }
-    });
+    }
+
+    // Check on page load
+    window.addEventListener('load', checkEmailVerification);
 </script>
 """, unsafe_allow_html=True)
 

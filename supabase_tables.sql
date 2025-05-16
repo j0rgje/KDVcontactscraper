@@ -32,3 +32,20 @@ create table public.notes (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- App settings tabel
+create table public.app_settings (
+  id uuid default uuid_generate_v4() primary key,
+  key text not null unique,
+  value text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Voeg default login logo setting toe
+insert into public.app_settings (key, value) 
+values ('login_logo_url', 'https://raw.githubusercontent.com/streamlit/streamlit/develop/examples/streamlit_app_logos/logo_01.png');
+
+-- Voeg default logo width setting toe
+insert into public.app_settings (key, value) 
+values ('login_logo_width', '200');

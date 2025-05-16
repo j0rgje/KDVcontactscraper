@@ -31,6 +31,59 @@ APP_CONFIG = {
     "admin_emails": ["jornbrem@gmail.com"]  # Voeg hier admin emails toe
 }
 
+# Functies voor app settings
+def load_app_settings():
+    try:
+        settings = supabase.table('app_settings').select('*').execute()
+        if settings.data:
+            for setting in settings.data:
+                if setting['key'] == 'login_logo_width':
+                    APP_CONFIG[setting['key']] = int(setting['value'])
+                else:
+                    APP_CONFIG[setting['key']] = setting['value']
+    except Exception as e:
+        st.error(f"Kon app instellingen niet laden: {str(e)}")
+
+def save_app_setting(key: str, value: str):
+    try:
+        # Check of de instelling al bestaat
+        existing = supabase.table('app_settings').select('*').eq('key', key).execute()
+        if existing.data:
+            # Update bestaande instelling
+            supabase.table('app_settings').update({'value': str(value), 'updated_at': datetime.now().isoformat()}).eq('key', key).execute()
+        else:
+            # Maak nieuwe instelling aan
+            supabase.table('app_settings').insert({'key': key, 'value': str(value)}).execute()
+        return True
+    except Exception as e:
+        st.error(f"Kon instelling niet opslaan: {str(e)}")
+        return False
+
+# Function to initialize app settings if they don't exist
+def initialize_app_settings():
+    try:
+        # Check if settings exist
+        settings = supabase.table('app_settings').select('*').execute()
+        if not settings.data:
+            # Initialize with default settings
+            supabase.table('app_settings').insert([
+                {
+                    'key': 'login_logo_url',
+                    'value': "https://github.com/j0rgje/KDVcontactscraper/blob/main/ChatGPT%20Image%2016%20mei%202025,%2011_54_16.png?raw=true"
+                },
+                {
+                    'key': 'login_logo_width',
+                    'value': "200"
+                }
+            ]).execute()
+            st.success("Logo instellingen zijn geïnitialiseerd!")
+    except Exception as e:
+        st.error(f"Kon initiële instellingen niet aanmaken: {str(e)}")
+
+# Laad app settings bij opstarten
+load_app_settings()
+initialize_app_settings()
+
 # Admin/dev mode check functie
 def is_admin_user(user_email: str) -> bool:
     return user_email in APP_CONFIG["admin_emails"] if user_email else False
@@ -196,6 +249,10 @@ with st.sidebar:
         new_logo_url = st.text_input("Login Logo URL", value=APP_CONFIG["login_logo_url"])
         new_logo_width = st.number_input("Logo breedte (px)", value=APP_CONFIG["login_logo_width"], min_value=50, max_value=800)
         if st.button("Update Logo Instellingen"):
+            # Update settings in Supabase
+            save_app_setting('login_logo_url', new_logo_url)
+            save_app_setting('login_logo_width', str(new_logo_width))
+            # Update local config
             APP_CONFIG["login_logo_url"] = new_logo_url
             APP_CONFIG["login_logo_width"] = new_logo_width
             st.success("Logo instellingen bijgewerkt!")

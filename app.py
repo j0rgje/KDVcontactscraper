@@ -23,6 +23,17 @@ import io
 import base64
 from streamlit_modal import Modal
 
+# Application configuration
+APP_CONFIG = {
+    "login_logo_url": "https://raw.githubusercontent.com/streamlit/streamlit/develop/examples/streamlit_app_logos/logo_01.png",
+    "login_logo_width": 200,
+    "app_name": "Locatiemanager Finder",
+    "admin_emails": ["jornbrem@gmail.com"]  # Voeg hier admin emails toe
+}
+
+# Admin/dev mode check functie
+def is_admin_user(user_email: str) -> bool:
+    return user_email in APP_CONFIG["admin_emails"] if user_email else False
 
 # Page configuration
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
@@ -89,6 +100,30 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Authentication flow
 if not st.session_state.session:
+    st.title(APP_CONFIG["app_name"])
+    
+    # Admin settings interface
+    if 'show_admin_settings' not in st.session_state:
+        st.session_state.show_admin_settings = False
+        
+    # Toon admin knop alleen als er een admin email is ingevoerd
+    if st.sidebar.text_input("Admin toegang (email)") in APP_CONFIG["admin_emails"]:
+        st.session_state.show_admin_settings = True
+        
+    if st.session_state.show_admin_settings:
+        with st.sidebar:
+            st.subheader("Admin Instellingen")
+            new_logo_url = st.text_input("Login Logo URL", value=APP_CONFIG["login_logo_url"])
+            new_logo_width = st.number_input("Logo breedte (px)", value=APP_CONFIG["login_logo_width"], min_value=50, max_value=800)
+            if st.button("Update Logo Instellingen"):
+                APP_CONFIG["login_logo_url"] = new_logo_url
+                APP_CONFIG["login_logo_width"] = new_logo_width
+                st.success("Logo instellingen bijgewerkt!")
+                st.rerun()
+    
+    # Toon het geconfigureerde logo
+    st.image(APP_CONFIG["login_logo_url"], width=APP_CONFIG["login_logo_width"])
+    
     st.sidebar.title("Authenticatie")
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])
     
@@ -471,12 +506,6 @@ def scrape_contactgegevens(url):
 
 # Scraper UI
 if st.session_state.session:
-    # Logo weergave bovenaan de pagina
-    if st.session_state.selected_team and st.session_state.selected_team != "Persoonlijk":
-        team = next((t for t in st.session_state.teams if t['name'] == st.session_state.selected_team), None)
-        if team and team.get('logo_url'):
-            st.image(team.get('logo_url'), width=200)
-    
     st.title("Kinderopvang Locatiemanager Scraper")
 
 # Tabs voor hoofdnavigatie

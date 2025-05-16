@@ -26,6 +26,11 @@ from streamlit_modal import Modal
 # Page configuration must be the first Streamlit command
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
+# Supabase initialization
+SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 # Application configuration
 APP_CONFIG = {
     "login_logo_url": "https://github.com/j0rgje/KDVcontactscraper/blob/main/ChatGPT%20Image%2016%20mei%202025,%2011_54_16.png?raw=true",
@@ -116,7 +121,7 @@ st.markdown("""
         border-radius: 5px;
         box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         width: 400px;
-        text-align: center;
+        text-align: center.
     }
     .modal-buttons {
         display: flex;
@@ -145,11 +150,6 @@ if st.session_state.scraping_in_progress is None:
     st.session_state.scraping_in_progress = False
 if st.session_state.resultaten is None:
     st.session_state.resultaten = []
-
-# Supabase initialization
-SUPABASE_URL = st.secrets.get("NEXT_PUBLIC_SUPABASE_URL")
-SUPABASE_KEY = st.secrets.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Authentication flow
 if not st.session_state.session:

@@ -205,6 +205,18 @@ if not st.session_state.session:
 with st.sidebar:
     user_email = st.session_state.user.get('email', 'Onbekend') if st.session_state.user else 'Onbekend'
     
+    # Admin settings interface
+    if is_admin_user(user_email):
+        st.markdown("---")
+        st.subheader("👨‍💼 Admin Instellingen")
+        new_logo_url = st.text_input("Login Logo URL", value=APP_CONFIG["login_logo_url"])
+        new_logo_width = st.number_input("Logo breedte (px)", value=APP_CONFIG["login_logo_width"], min_value=50, max_value=800)
+        if st.button("Update Logo Instellingen"):
+            APP_CONFIG["login_logo_url"] = new_logo_url
+            APP_CONFIG["login_logo_width"] = new_logo_width
+            st.success("Logo instellingen bijgewerkt!")
+            st.rerun()
+    
     # Logout button at the top
     if st.button("🚪 Log uit"):
         supabase.auth.sign_out()

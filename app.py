@@ -23,6 +23,9 @@ import io
 import base64
 from streamlit_modal import Modal
 
+# Page configuration must be the first Streamlit command
+st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
+
 # Application configuration
 APP_CONFIG = {
     "login_logo_url": "https://github.com/j0rgje/KDVcontactscraper/blob/main/ChatGPT%20Image%2016%20mei%202025,%2011_54_16.png?raw=true",
@@ -87,9 +90,6 @@ initialize_app_settings()
 # Admin/dev mode check functie
 def is_admin_user(user_email: str) -> bool:
     return user_email in APP_CONFIG["admin_emails"] if user_email else False
-
-# Page configuration
-st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
 
 # Initialize modal voor team verwijderen en teamlid verwijderen
 modal = Modal("Team verwijderen", key="delete_modal")

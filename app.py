@@ -25,7 +25,7 @@ from streamlit_modal import Modal
 
 # Application configuration
 APP_CONFIG = {
-    "login_logo_url": "https://raw.githubusercontent.com/streamlit/streamlit/develop/examples/streamlit_app_logos/logo_01.png",
+    "login_logo_url": "https://github.com/j0rgje/KDVcontactscraper/blob/main/ChatGPT%20Image%2016%20mei%202025%2C%2011_54_16.png",
     "login_logo_width": 200,
     "app_name": "Locatiemanager Finder",
     "admin_emails": ["jornbrem@gmail.com"]  # Voeg hier admin emails toe
@@ -100,6 +100,12 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Authentication flow
 if not st.session_state.session:
+    # Toon het geconfigureerde logo
+    try:
+        st.image(APP_CONFIG["login_logo_url"], width=APP_CONFIG["login_logo_width"])
+    except Exception as e:
+        st.error(f"Kon het logo niet laden: {str(e)}")
+        
     st.title(APP_CONFIG["app_name"])
     
     # Admin settings interface
@@ -120,9 +126,6 @@ if not st.session_state.session:
                 APP_CONFIG["login_logo_width"] = new_logo_width
                 st.success("Logo instellingen bijgewerkt!")
                 st.rerun()
-    
-    # Toon het geconfigureerde logo
-    st.image(APP_CONFIG["login_logo_url"], width=APP_CONFIG["login_logo_width"])
     
     st.sidebar.title("Authenticatie")
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])

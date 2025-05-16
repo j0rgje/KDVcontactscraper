@@ -249,14 +249,22 @@ with st.sidebar:
         new_logo_url = st.text_input("Login Logo URL", value=APP_CONFIG["login_logo_url"])
         new_logo_width = st.number_input("Logo breedte (px)", value=APP_CONFIG["login_logo_width"], min_value=50, max_value=800)
         if st.button("Update Logo Instellingen"):
-            # Update settings in Supabase
-            save_app_setting('login_logo_url', new_logo_url)
-            save_app_setting('login_logo_width', str(new_logo_width))
-            # Update local config
-            APP_CONFIG["login_logo_url"] = new_logo_url
-            APP_CONFIG["login_logo_width"] = new_logo_width
-            st.success("Logo instellingen bijgewerkt!")
-            st.rerun()
+            success = True
+            # Update beide instellingen in de database
+            if not save_app_setting('login_logo_url', new_logo_url):
+                success = False
+            if not save_app_setting('login_logo_width', str(new_logo_width)):
+                success = False
+                
+            if success:
+                # Als beide updates succesvol waren, update de lokale config
+                APP_CONFIG["login_logo_url"] = new_logo_url
+                APP_CONFIG["login_logo_width"] = new_logo_width
+                st.success("Logo instellingen bijgewerkt!")
+                # Laad de instellingen opnieuw uit de database
+                load_app_settings()
+                time.sleep(0.5)  # Kleine vertraging om de database update tijd te geven
+                st.rerun()
     
     # Logout button at the top
     if st.button("🚪 Log uit"):

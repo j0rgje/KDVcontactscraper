@@ -25,7 +25,7 @@ from streamlit_modal import Modal
 
 # Application configuration
 APP_CONFIG = {
-    "login_logo_url": "https://github.com/j0rgje/KDVcontactscraper/blob/main/ChatGPT%20Image%2016%20mei%202025%2C%2011_54_16.png",
+    "login_logo_url": "https://github.com/j0rgje/KDVcontactscraper/blob/main/ChatGPT%20Image%2016%20mei%202025,%2011_54_16.png?raw=true",
     "login_logo_width": 200,
     "app_name": "Locatiemanager Finder",
     "admin_emails": ["jornbrem@gmail.com"]  # Voeg hier admin emails toe
@@ -107,25 +107,6 @@ if not st.session_state.session:
         st.error(f"Kon het logo niet laden: {str(e)}")
         
     st.title(APP_CONFIG["app_name"])
-    
-    # Admin settings interface
-    if 'show_admin_settings' not in st.session_state:
-        st.session_state.show_admin_settings = False
-        
-    # Toon admin knop alleen als er een admin email is ingevoerd
-    if st.sidebar.text_input("Admin toegang (email)") in APP_CONFIG["admin_emails"]:
-        st.session_state.show_admin_settings = True
-        
-    if st.session_state.show_admin_settings:
-        with st.sidebar:
-            st.subheader("Admin Instellingen")
-            new_logo_url = st.text_input("Login Logo URL", value=APP_CONFIG["login_logo_url"])
-            new_logo_width = st.number_input("Logo breedte (px)", value=APP_CONFIG["login_logo_width"], min_value=50, max_value=800)
-            if st.button("Update Logo Instellingen"):
-                APP_CONFIG["login_logo_url"] = new_logo_url
-                APP_CONFIG["login_logo_width"] = new_logo_width
-                st.success("Logo instellingen bijgewerkt!")
-                st.rerun()
     
     st.sidebar.title("Authenticatie")
     action = st.sidebar.radio("Actie:", ["Inloggen", "Registreren"])

@@ -473,24 +473,106 @@ def zoek_website_bij_naam(locatienaam, plaats):
     return None
 
 # Enhanced async scraping functions
-async def fetch_page(session, url):
+async def fetch_page(session, url, attempt=1, max_attempts=3):
+    """Enhanced page fetching with multiple user agents and anti-bot measures"""
+    
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
+    ]
+    
+    headers = {
+        'User-Agent': user_agents[(attempt - 1) % len(user_agents)],
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"'
+    }
+    
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        async with session.get(url, timeout=15, headers=headers) as response:
+        # Add delay between attempts to avoid being flagged as bot
+        if attempt > 1:
+            await asyncio.sleep(2 * attempt)
+            
+        timeout = aiohttp.ClientTimeout(total=20, connect=10)
+        
+        async with session.get(
+            url, 
+            headers=headers,
+            timeout=timeout,
+            ssl=False,  # Disable SSL verification as fallback
+            allow_redirects=True
+        ) as response:
+            
             if response.status == 200:
-                return await response.text()
-            return None
+                content = await response.text()
+                return content
+            elif response.status == 403 and attempt < max_attempts:
+                # Try with different user agent on 403 Forbidden
+                return await fetch_page(session, url, attempt + 1, max_attempts)
+            elif response.status == 429 and attempt < max_attempts:
+                # Rate limited, wait longer and retry
+                await asyncio.sleep(5 * attempt)
+                return await fetch_page(session, url, attempt + 1, max_attempts)
+            else:
+                return f"HTTP_ERROR_{response.status}"
+                
+    except asyncio.TimeoutError:
+        if attempt < max_attempts:
+            return await fetch_page(session, url, attempt + 1, max_attempts)
+        return "TIMEOUT_ERROR"
     except Exception as e:
-        return None
+        error_msg = str(e)
+        if attempt < max_attempts:
+            # Try again with different approach
+            return await fetch_page(session, url, attempt + 1, max_attempts)
+        return f"FETCH_ERROR: {error_msg}"
+
+async def quick_check_url(url):
+    """Quick check if URL is reachable before full scraping"""
+    try:
+        connector = aiohttp.TCPConnector(ssl=False)
+        timeout = aiohttp.ClientTimeout(total=10)
+        
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with session.head(url) as response:
+                return response.status in [200, 301, 302, 403]  # 403 might still have content
+    except:
+        return False
 
 async def scrape_deep(url, max_depth=2):
     result = {"emails": set(), "telefoons": set(), "adressen": set(), "managers": set(), "error": "", "debug_info": []}
     visited = set()
     base_url = url
+    
+    # Quick check if URL is reachable first
+    result["debug_info"].append(f"Starting scrape of: {url}")
+    if not await quick_check_url(url):
+        result["error"] = "Website is not reachable"
+        result["debug_info"].append("-> Pre-check failed: URL is not accessible")
+        return {k: list(v) if isinstance(v, set) else v for k, v in result.items()}
 
-    async with aiohttp.ClientSession() as session:
+    # Configure session to be more browser-like
+    connector = aiohttp.TCPConnector(ssl=False, limit=10)
+    jar = aiohttp.CookieJar()
+    timeout = aiohttp.ClientTimeout(total=30)
+    
+    async with aiohttp.ClientSession(
+        connector=connector,
+        cookie_jar=jar,
+        timeout=timeout
+    ) as session:
         async def process_page(url, depth):
             if depth > max_depth or url in visited:
                 return
@@ -499,8 +581,15 @@ async def scrape_deep(url, max_depth=2):
             result["debug_info"].append(f"Scraping: {url} (depth: {depth})")
             
             html = await fetch_page(session, url)
-            if not html:
-                result["debug_info"].append(f"Failed to fetch: {url}")
+            if not html or isinstance(html, str) and html.startswith(('HTTP_ERROR', 'TIMEOUT_ERROR', 'FETCH_ERROR')):
+                error_msg = html if html else "No content returned"
+                result["debug_info"].append(f"Failed to fetch {url}: {error_msg}")
+                if html and 'HTTP_ERROR_403' in html:
+                    result["debug_info"].append("-> Website may be blocking automated requests")
+                elif html and 'TIMEOUT_ERROR' in html:
+                    result["debug_info"].append("-> Request timed out - website may be slow or blocking")
+                elif html and 'FETCH_ERROR' in html:
+                    result["debug_info"].append("-> Network or SSL error occurred")
                 return
 
             soup = BeautifulSoup(html, 'html.parser')
@@ -662,7 +751,16 @@ async def backup_search(locatienaam, plaats):
     query = f"{locatienaam} {plaats} kinderopvang"
     search_url = f"https://www.google.com/search?q={query}"
     
-    async with aiohttp.ClientSession() as session:
+    # Configure session to be more browser-like for Google search
+    connector = aiohttp.TCPConnector(ssl=False, limit=5)
+    jar = aiohttp.CookieJar()
+    timeout = aiohttp.ClientTimeout(total=15)
+    
+    async with aiohttp.ClientSession(
+        connector=connector,
+        cookie_jar=jar,
+        timeout=timeout
+    ) as session:
         try:
             html = await fetch_page(session, search_url)
             if html:

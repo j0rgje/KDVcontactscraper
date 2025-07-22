@@ -22,6 +22,9 @@ from PIL import Image
 import io
 import base64
 from streamlit_modal import Modal
+import subprocess
+import tempfile
+import os
 
 # Page configuration must be the first Streamlit command
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
@@ -1043,6 +1046,195 @@ def scrape_contactgegevens(url):
         result['error'] = str(e)
     return result
 
+# Voeg toe na de andere import statements
+import subprocess
+import tempfile
+import os
+
+# Voeg deze functie toe na extract_main_content
+def selenium_scrape_fallback(url):
+    """Selenium-gebaseerde scraper voor websites die requests blokkeren"""
+    try:
+        # Check if we can import selenium
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        
+        # Chrome options voor headless browsing
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        # Start browser
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(url)
+        
+        # Wait for page load
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        
+        # Get page source
+        html_content = driver.page_source
+        driver.quit()
+        
+        # Extract content
+        structured_text = extract_main_content(html_content)
+        return {"success": True, "content": structured_text, "method": "selenium"}
+        
+    except ImportError:
+        return {"success": False, "error": "Selenium not installed", "method": "selenium"}
+    except Exception as e:
+        return {"success": False, "error": str(e), "method": "selenium"}
+
+def proxy_scrape_fallback(url):
+    """Scraping via verschillende proxy's"""
+    # Gratis proxy lijst (in echte implementatie zou je betere proxies gebruiken)
+    proxies = [
+        {'http': 'http://proxy1.com:8080', 'https': 'https://proxy1.com:8080'},
+        {'http': 'http://proxy2.com:3128', 'https': 'https://proxy2.com:3128'},
+    ]
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
+    
+    for i, proxy in enumerate(proxies):
+        try:
+            response = requests.get(url, proxies=proxy, headers=headers, timeout=15)
+            if response.status_code == 200:
+                content = extract_main_content(response.text)
+                return {"success": True, "content": content, "method": f"proxy_{i+1}"}
+        except Exception as e:
+            continue
+    
+    return {"success": False, "error": "All proxies failed", "method": "proxy"}
+
+def scrapeowl_api_fallback(url):
+    """Scraping via ScrapeOwl API service"""
+    try:
+        # Dit zou een echte API key nodig hebben
+        api_key = st.secrets.get("SCRAPEOWL_API_KEY", "demo_key")
+        api_url = "https://api.scrapeowl.com/v1/scrape"
+        
+        payload = {
+            'api_key': api_key,
+            'url': url,
+            'render_js': True,
+            'wait_for': 2000,
+        }
+        
+        response = requests.post(api_url, data=payload, timeout=30)
+        if response.status_code == 200:
+            content = extract_main_content(response.text)
+            return {"success": True, "content": content, "method": "scrapeowl"}
+        else:
+            return {"success": False, "error": f"API error: {response.status_code}", "method": "scrapeowl"}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e), "method": "scrapeowl"}
+
+def wayback_machine_fallback(url):
+    """Haal content op via Wayback Machine"""
+    try:
+        # Wayback Machine API
+        wayback_url = f"http://archive.org/wayback/available?url={url}"
+        response = requests.get(wayback_url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('archived_snapshots', {}).get('closest'):
+                archived_url = data['archived_snapshots']['closest']['url']
+                
+                # Haal gearchiveerde versie op
+                archived_response = requests.get(archived_url, timeout=15)
+                if archived_response.status_code == 200:
+                    content = extract_main_content(archived_response.text)
+                    return {"success": True, "content": content, "method": "wayback", "archived_url": archived_url}
+        
+        return {"success": False, "error": "No archived version found", "method": "wayback"}
+        
+    except Exception as e:
+        return {"success": False, "error": str(e), "method": "wayback"}
+
+def curl_subprocess_fallback(url):
+    """Gebruik curl via subprocess (soms werkt dit als requests faalt)"""
+    try:
+        # Curl command met browser headers
+        curl_cmd = [
+            'curl', '-s', '-L', '--max-time', '15',
+            '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            '-H', 'Accept-Language: nl-NL,nl;q=0.9,en;q=0.8',
+            '-H', 'DNT: 1',
+            '-H', 'Connection: keep-alive',
+            url
+        ]
+        
+        result = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=20)
+        
+        if result.returncode == 0 and result.stdout:
+            content = extract_main_content(result.stdout)
+            return {"success": True, "content": content, "method": "curl"}
+        else:
+            return {"success": False, "error": f"Curl failed: {result.stderr}", "method": "curl"}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e), "method": "curl"}
+
+def try_all_fallback_methods(url):
+    """Probeer alle beschikbare methoden tot één werkt"""
+    methods = [
+        ("Selenium Browser", selenium_scrape_fallback),
+        ("Wayback Machine", wayback_machine_fallback), 
+        ("Curl Subprocess", curl_subprocess_fallback),
+        ("Proxy Rotation", proxy_scrape_fallback),
+        ("ScrapeOwl API", scrapeowl_api_fallback)
+    ]
+    
+    results = []
+    
+    for method_name, method_func in methods:
+        try:
+            result = method_func(url)
+            results.append({
+                "method": method_name,
+                "result": result
+            })
+            
+            # Als deze methode werkt, return meteen
+            if result.get("success"):
+                return {
+                    "success": True,
+                    "content": result.get("content", ""),
+                    "method": method_name,
+                    "all_attempts": results
+                }
+        except Exception as e:
+            results.append({
+                "method": method_name, 
+                "result": {"success": False, "error": str(e)}
+            })
+    
+    # Alle methoden gefaald
+    return {
+        "success": False,
+        "error": "All fallback methods failed",
+        "all_attempts": results
+    }
+
 # Scraper UI
 if st.session_state.session:
     st.title("Kinderopvang Locatiemanager Scraper")
@@ -1094,25 +1286,106 @@ with tab1:
         use_content_extraction = st.checkbox("Gebruik geavanceerde content extractie", value=True, 
                                            help="Extraheert alleen de hoofdinhoud en filtert ruis weg")
         
+        # Fallback methode keuze
+        fallback_method = st.selectbox(
+            "Kies fallback methode bij blokkering:",
+            [
+                "Automatisch (probeer alle methoden)",
+                "Selenium Browser Automation", 
+                "Wayback Machine Archive",
+                "Curl Subprocess",
+                "Proxy Rotation",
+                "ScrapeOwl API Service"
+            ],
+            help="Deze methode wordt gebruikt als de standaard scraper wordt geblokkeerd"
+        )
+        
         if test_url and st.button("Test Scraping"):
             with st.spinner("Bezig met testen van website..."):
                 try:
                     # Test de scraping functie direct
                     result = asyncio.run(scrape_deep(test_url))
                     
-                    # If async scraper failed, try fallback
-                    if (result.get('error') or 
-                        (not result.get('emails') and not result.get('telefoons') and not result.get('adressen')) or
-                        any('HTTP_ERROR_403' in str(debug) for debug in result.get('debug_info', []))):
+                    # Check if we need to try advanced fallback methods
+                    scraper_failed = (result.get('error') or 
+                                    (not result.get('emails') and not result.get('telefoons') and not result.get('adressen')) or
+                                    any('HTTP_ERROR_403' in str(debug) for debug in result.get('debug_info', [])))
+                    
+                    if scraper_failed:
+                        st.info("Standaard scraper gefaald, probeer geavanceerde methoden...")
                         
-                        st.info("Async scraper gefaald, probeer fallback methode (requests)...")
-                        fallback_result = scrape_contactgegevens(test_url)
+                        # Try the selected fallback method
+                        advanced_result = None
                         
-                        if not fallback_result.get('error') and (fallback_result.get('emails') or fallback_result.get('telefoons')):
-                            result = fallback_result
-                            result['debug_info'] = ["Async scraper gefaald", "Gebruikt fallback scraper (requests)", "Fallback succesvol!"]
+                        if fallback_method == "Automatisch (probeer alle methoden)":
+                            advanced_result = try_all_fallback_methods(test_url)
+                        elif fallback_method == "Selenium Browser Automation":
+                            advanced_result = selenium_scrape_fallback(test_url)
+                        elif fallback_method == "Wayback Machine Archive":
+                            advanced_result = wayback_machine_fallback(test_url)
+                        elif fallback_method == "Curl Subprocess":
+                            advanced_result = curl_subprocess_fallback(test_url)
+                        elif fallback_method == "Proxy Rotation":
+                            advanced_result = proxy_scrape_fallback(test_url)
+                        elif fallback_method == "ScrapeOwl API Service":
+                            advanced_result = scrapeowl_api_fallback(test_url)
+                        
+                        if advanced_result and advanced_result.get('success'):
+                            # Extract contact info from the successful content
+                            content = advanced_result.get('content', '')
+                            if content:
+                                # Parse the content for contact info
+                                emails = re.findall(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}", content)
+                                phones = []
+                                try:
+                                    for match in phonenumbers.PhoneNumberMatcher(content, "NL"):
+                                        phones.append(phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL))
+                                except:
+                                    pass
+                                
+                                addr_patterns = [
+                                    r'\b[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+[a-z]?\b',
+                                    r'\b\d{4}\s?[A-Z]{2}\b'
+                                ]
+                                addresses = []
+                                for pattern in addr_patterns:
+                                    addresses.extend(re.findall(pattern, content))
+                                
+                                managers = []
+                                lines = content.split('\n')
+                                for line in lines:
+                                    if 10 < len(line.strip()) < 80:
+                                        if re.search(r'locatiemanager|manager|directeur', line, flags=re.IGNORECASE):
+                                            managers.append(line.strip())
+                                
+                                # Update result with found data
+                                result = {
+                                    'emails': emails,
+                                    'telefoons': phones, 
+                                    'adressen': addresses,
+                                    'managers': managers,
+                                    'debug_info': [
+                                        f"Standaard scraper gefaald",
+                                        f"Succesvol met: {advanced_result.get('method', 'unknown')}",
+                                        f"Content lengte: {len(content)} characters"
+                                    ]
+                                }
+                                
+                                # Show all attempts if available
+                                if 'all_attempts' in advanced_result:
+                                    result['debug_info'].append("--- Alle pogingen ---")
+                                    for attempt in advanced_result['all_attempts']:
+                                        method = attempt['method']
+                                        success = attempt['result'].get('success', False)
+                                        error = attempt['result'].get('error', '')
+                                        result['debug_info'].append(f"{method}: {'✅' if success else '❌'} {error}")
+                                
+                                st.success(f"✅ Succesvol gescraped met: {advanced_result.get('method')}")
+                            else:
+                                result['debug_info'].append(f"Fallback methode werkte maar leverde geen content op")
                         else:
-                            result['debug_info'] = result.get('debug_info', []) + [f"Fallback ook gefaald: {fallback_result.get('error', 'geen data gevonden')}"]
+                            error_msg = advanced_result.get('error', 'Unknown error') if advanced_result else 'No result'
+                            result['debug_info'] = result.get('debug_info', []) + [f"Alle geavanceerde methoden gefaald: {error_msg}"]
                     
                     st.subheader("Test Resultaten")
                     col1, col2 = st.columns(2)

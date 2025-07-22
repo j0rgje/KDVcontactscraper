@@ -777,23 +777,128 @@ async def backup_search(locatienaam, plaats):
 @st.cache_data
 def scrape_contactgegevens(url):
     result = {"emails": [], "telefoons": [], "adressen": [], "managers": [], "error": ""}
+    
+    # Enhanced headers to mimic real browser
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+    }
+    
     try:
-        resp = requests.get(url, timeout=10)
+        # Create session with headers
+        session = requests.Session()
+        session.headers.update(headers)
+        
+        # Try multiple approaches
+        for attempt in range(2):
+            try:
+                if attempt == 0:
+                    resp = session.get(url, timeout=15, verify=True)
+                else:
+                    # Second attempt: disable SSL verification
+                    resp = session.get(url, timeout=15, verify=False)
+                
+                if resp.status_code == 200:
+                    break
+                elif resp.status_code == 403:
+                    # Try with different User-Agent
+                    session.headers.update({
+                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
+                    })
+                    continue
+                else:
+                    resp.raise_for_status()
+                    
+            except requests.exceptions.SSLError:
+                if attempt == 0:
+                    continue  # Try again without SSL verification
+                else:
+                    raise
+        
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
-        text = soup.get_text(separator="\n")
-        # Emails
-        result['emails'] = re.findall(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}", text)
-        # Phones
-        phones = []
-        for match in phonenumbers.PhoneNumberMatcher(text, "NL"):
-            phones.append(phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL))
-        result['telefoons'] = phones
-        # Addresses (street+nr or postcode)
-        addr_pattern = r"[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+|\d{4}\s?[A-Z]{2}"
-        result['adressen'] = re.findall(addr_pattern, text)
-        # Managers
-        result['managers'] = [line.strip() for line in text.split("\n") if re.search(r"locatiemanager", line, flags= re.IGNORECASE)]
+        
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.extract()
+        
+        text = soup.get_text(separator=" ", strip=True)
+        
+        # Enhanced email extraction
+        email_patterns = [
+            r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}",
+            r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+        ]
+        
+        emails = set()
+        for pattern in email_patterns:
+            found = re.findall(pattern, text)
+            for email in found:
+                if not any(skip in email.lower() for skip in ['example', 'test', 'noreply']):
+                    emails.add(email.lower().strip())
+        result['emails'] = list(emails)
+        
+        # Enhanced phone extraction
+        phones = set()
+        try:
+            for match in phonenumbers.PhoneNumberMatcher(text, "NL"):
+                formatted = phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+                phones.add(formatted)
+                
+            # Backup regex patterns for Dutch phones
+            phone_patterns = [
+                r'(?:\+31|0031|0)[\s\-]?6[\s\-]?[\d\s\-]{8}',  # Dutch mobile
+                r'(?:\+31|0031|0)[\s\-]?[1-9][\d\s\-]{8}',     # Dutch landline
+            ]
+            
+            for pattern in phone_patterns:
+                found_phones = re.findall(pattern, text)
+                for phone in found_phones:
+                    cleaned = re.sub(r'[^\d\+]', '', phone)
+                    if len(cleaned) >= 9:
+                        phones.add(phone.strip())
+                        
+        except Exception:
+            pass
+            
+        result['telefoons'] = list(phones)
+        
+        # Enhanced address extraction
+        addr_patterns = [
+            r'\b[A-Z][a-z]+(?:straat|laan|weg|plein|dreef|park|boulevard)\s*\d+[a-z]?\b',
+            r'\b\d{4}\s?[A-Z]{2}\s+[A-Z][a-z]+',  # Postcode + plaats
+            r'\b\d{4}\s?[A-Z]{2}\b'  # Alleen postcode
+        ]
+        
+        addresses = set()
+        for pattern in addr_patterns:
+            found = re.findall(pattern, text)
+            addresses.update(addr.strip() for addr in found)
+        result['adressen'] = list(addresses)
+        
+        # Enhanced manager extraction
+        manager_keywords = [
+            r'locatiemanager', r'locatie\s*manager',
+            r'manager', r'directeur', r'directrice',
+            r'leidinggevende', r'teamleider', r'teamleidster'
+        ]
+        
+        managers = set()
+        lines = text.split('\n')
+        for line in lines:
+            line = line.strip()
+            if 10 < len(line) < 80:  # Reasonable length
+                for keyword in manager_keywords:
+                    if re.search(keyword, line, flags=re.IGNORECASE):
+                        managers.add(line)
+                        break
+        result['managers'] = list(managers)
+        
     except Exception as e:
         result['error'] = str(e)
     return result
@@ -850,6 +955,20 @@ with tab1:
                 try:
                     # Test de scraping functie direct
                     result = asyncio.run(scrape_deep(test_url))
+                    
+                    # If async scraper failed, try fallback
+                    if (result.get('error') or 
+                        (not result.get('emails') and not result.get('telefoons') and not result.get('adressen')) or
+                        any('HTTP_ERROR_403' in str(debug) for debug in result.get('debug_info', []))):
+                        
+                        st.info("Async scraper gefaald, probeer fallback methode (requests)...")
+                        fallback_result = scrape_contactgegevens(test_url)
+                        
+                        if not fallback_result.get('error') and (fallback_result.get('emails') or fallback_result.get('telefoons')):
+                            result = fallback_result
+                            result['debug_info'] = ["Async scraper gefaald", "Gebruikt fallback scraper (requests)", "Fallback succesvol!"]
+                        else:
+                            result['debug_info'] = result.get('debug_info', []) + [f"Fallback ook gefaald: {fallback_result.get('error', 'geen data gevonden')}"]
                     
                     st.subheader("Test Resultaten")
                     col1, col2 = st.columns(2)
@@ -924,12 +1043,29 @@ with tab1:
                         # Try SerpAPI first, then fallback
                         site = zoek_website_bij_naam(naam, plaats)
                         if not site:
-                            site = await backup_search(naam, plaats)
+                                                    site = await backup_search(naam, plaats)
+                    
+                    if site:
+                        # First try the advanced async scraper
+                        data = await scrape_deep(site)
                         
-                        if site:
-                            data = await scrape_deep(site)
-                        else:
-                            data = {'error': 'Geen website gevonden'}
+                        # If that fails due to bot blocking, fallback to requests-based scraper
+                        if (data.get('error') or 
+                            (not data.get('emails') and not data.get('telefoons') and not data.get('adressen')) or
+                            any('HTTP_ERROR_403' in str(debug) for debug in data.get('debug_info', []))):
+                            
+                            # No progress.text available in this context
+                            fallback_data = scrape_contactgegevens(site)
+                            
+                            # If fallback found data, use it
+                            if not fallback_data.get('error') and (fallback_data.get('emails') or fallback_data.get('telefoons')):
+                                data = fallback_data
+                                data['debug_info'] = [f"Gebruikt fallback scraper (requests) na async failure"]
+                            else:
+                                # Keep original async result but note the fallback attempt
+                                data['debug_info'] = data.get('debug_info', []) + [f"Fallback scraper ook gefaald: {fallback_data.get('error', 'geen data gevonden')}"]
+                    else:
+                        data = {'error': 'Geen website gevonden'}
 
                         resultaat = {
                             'locatienaam': naam,

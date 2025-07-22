@@ -25,6 +25,10 @@ from streamlit_modal import Modal
 import subprocess
 import tempfile
 import os
+import openai
+import hashlib
+from datetime import datetime
+import json
 
 # Page configuration must be the first Streamlit command
 st.set_page_config(page_title="Locatiemanager Finder", layout="wide")
@@ -1391,6 +1395,159 @@ def different_dns_scrape_fallback(url):
     
     return {"success": False, "error": "All DNS servers failed", "method": "different_dns"}
 
+def save_html_for_ai_analysis(url, html_content, method_used="unknown"):
+    """Sla HTML op voor AI-analyse en return file info"""
+    try:
+        # Maak unieke filename gebaseerd op URL en timestamp
+        url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"scraped_{url_hash}_{timestamp}.html"
+        
+        # Create een tijdelijke directory als het niet bestaat
+        temp_dir = "scraped_html"
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
+        
+        filepath = os.path.join(temp_dir, filename)
+        
+        # Sla HTML op met metadata
+        html_with_metadata = f"""
+<!DOCTYPE html>
+<!-- SCRAPING METADATA -->
+<!-- URL: {url} -->
+<!-- Method: {method_used} -->
+<!-- Timestamp: {datetime.now().isoformat()} -->
+<!-- Filename: {filename} -->
+<!-- END METADATA -->
+
+{html_content}
+"""
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(html_with_metadata)
+        
+        return {
+            "success": True,
+            "filepath": filepath,
+            "filename": filename,
+            "url": url,
+            "method": method_used,
+            "timestamp": datetime.now().isoformat(),
+            "file_size": len(html_content)
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "filepath": None
+        }
+
+def ai_extract_contact_data(html_content, url="unknown", use_openai=True, model="gpt-3.5-turbo"):
+    """Gebruik AI om contactgegevens uit HTML te extraheren"""
+    
+    # Clean de HTML voor AI processing
+    structured_text = extract_main_content(html_content)
+    
+    # Limiteer de tekst tot ~3000 tekens om binnen API limieten te blijven
+    if len(structured_text) > 3000:
+        structured_text = structured_text[:3000] + "..."
+    
+    system_prompt = """Je bent een expert in het extraheren van contactgegevens van kinderopvang websites. 
+Analyseer de gegeven tekst en extraher ALLEEN de volgende informatie:
+
+BELANGRIJK: Geef ALLEEN echte, concrete gegevens terug. Geen placeholders of voorbeelden.
+
+Zoek naar:
+1. E-mailadressen (echte email adressen, geen voorbeelden)
+2. Nederlandse telefoonnummers (mobiel en vast)
+3. Adressen (straatnaam + nummer, postcodes)
+4. Namen van locatiemanagers, directeuren, of andere contactpersonen
+5. Openingstijden (indien vermeld)
+6. Vestigingsnamen of locatie-informatie
+
+Retourneer het resultaat in dit EXACTE JSON formaat:
+{
+    "emails": ["email1@example.nl", "email2@company.com"],
+    "telefoons": ["+31 6 12345678", "030-1234567"],
+    "adressen": ["Straatnaam 123", "1234 AB Plaatsnaam"],
+    "managers": ["Jan de Manager - Locatiemanager", "Marie Janssen - Directeur"],
+    "openingstijden": ["Ma-Vr 7:30-18:30", "Za 8:00-17:00"],
+    "vestiging_info": ["Vestigingsnaam", "Locatie details"],
+    "confidence": 0.8
+}
+
+Als je geen informatie vindt, gebruik lege arrays []. Confidence is een getal tussen 0-1."""
+
+    user_prompt = f"""
+Website URL: {url}
+
+Tekst om te analyseren:
+{structured_text}
+
+Extraher alle contactgegevens volgens de instructies."""
+
+    try:
+        if use_openai:
+            # OpenAI API call
+            openai_api_key = st.secrets.get("OPENAI_API_KEY", "")
+            
+            if not openai_api_key or openai_api_key == "":
+                return {
+                    "success": False,
+                    "error": "OpenAI API key niet gevonden in secrets",
+                    "extracted_data": None
+                }
+            
+            openai.api_key = openai_api_key
+            
+            response = openai.ChatCompletion.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=1000
+            )
+            
+            ai_response = response.choices[0].message.content.strip()
+            
+            # Parse JSON response
+            try:
+                extracted_data = json.loads(ai_response)
+                
+                return {
+                    "success": True,
+                    "extracted_data": extracted_data,
+                    "raw_response": ai_response,
+                    "method": "openai_gpt3.5",
+                    "text_length": len(structured_text)
+                }
+                
+            except json.JSONDecodeError as e:
+                return {
+                    "success": False,
+                    "error": f"JSON parse error: {str(e)}",
+                    "raw_response": ai_response,
+                    "extracted_data": None
+                }
+        
+        else:
+            # Fallback: gebruik regel-gebaseerde extractie
+            return {
+                "success": False,
+                "error": "AI extraction not available",
+                "extracted_data": None
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"AI extraction failed: {str(e)}",
+            "extracted_data": None
+        }
+
 def try_all_fallback_methods(url, combine_results=True):
     """Probeer alle beschikbare methoden en combineer de resultaten"""
     methods = [
@@ -1693,6 +1850,44 @@ with tab1:
         # Debug mode toggle
         debug_mode = st.checkbox("🐛 Debug modus", help="Toont gedetailleerde informatie over elke stap")
         
+        # AI Extraction options
+        st.markdown("---")
+        st.subheader("🤖 AI-gebaseerde Extractie")
+        
+        use_ai_extraction = st.checkbox(
+            "🧠 Gebruik AI voor contactgegevens extractie", 
+            value=True,
+            help="Gebruikt ChatGPT om intelligent contactgegevens uit HTML te extraheren"
+        )
+        
+        save_html_files = st.checkbox(
+            "💾 Sla HTML bestanden op", 
+            value=True,
+            help="Bewaart HTML bestanden lokaal voor analyse en debugging"
+        )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            ai_model_choice = st.selectbox(
+                "AI Model:",
+                ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo"],
+                help="Kies het OpenAI model voor extractie"
+            )
+        
+        with col2:
+            compare_methods = st.checkbox(
+                "🔍 Vergelijk AI vs Regex", 
+                value=True,
+                help="Toont vergelijking tussen AI extractie en traditionele regex"
+            )
+        
+        # OpenAI API key check
+        openai_api_key = st.secrets.get("OPENAI_API_KEY", "")
+        if use_ai_extraction and not openai_api_key:
+            st.warning("⚠️ OpenAI API key niet gevonden in secrets. AI extractie wordt overgeslagen.")
+        elif use_ai_extraction and openai_api_key:
+            st.success("✅ OpenAI API key gevonden. AI extractie beschikbaar.")
+        
         if test_url and st.button("Test Scraping"):
             with st.spinner("Bezig met testen van website..."):
                 try:
@@ -1769,6 +1964,73 @@ with tab1:
                         
                         if advanced_result and advanced_result.get('success'):
                             content = advanced_result.get('content', '')
+                            
+                            # Save HTML and perform AI extraction if enabled
+                            saved_files = []
+                            ai_results = []
+                            
+                            if content and 'individual_contents' in advanced_result:
+                                # Multiple methods - process each one
+                                for content_item in advanced_result['individual_contents']:
+                                    method_name = content_item['method']
+                                    method_content = content_item['content']
+                                    
+                                    # Save HTML if enabled
+                                    if save_html_files and method_content:
+                                        # We need raw HTML, not structured text - let's get it differently
+                                        st.info(f"💾 HTML opslaan voor {method_name}...")
+                                        
+                                        # For now, save the structured content as HTML-like
+                                        pseudo_html = f"<html><body><div class='extracted-content'>{method_content.replace('\n', '<br>')}</div></body></html>"
+                                        file_info = save_html_for_ai_analysis(test_url, pseudo_html, method_name)
+                                        if file_info['success']:
+                                            saved_files.append(file_info)
+                                            st.success(f"✅ HTML opgeslagen: {file_info['filename']}")
+                                    
+                                    # AI extraction if enabled
+                                    if use_ai_extraction and openai_api_key and method_content:
+                                        st.info(f"🤖 AI extractie voor {method_name}...")
+                                        ai_result = ai_extract_contact_data(
+                                            method_content, 
+                                            test_url, 
+                                            use_openai=True,
+                                            model=ai_model_choice
+                                        )
+                                        if ai_result['success']:
+                                            ai_result['method'] = method_name
+                                            ai_results.append(ai_result)
+                                            st.success(f"✅ AI extractie voltooid voor {method_name}")
+                                        else:
+                                            st.warning(f"⚠️ AI extractie gefaald voor {method_name}: {ai_result.get('error', 'Unknown error')}")
+                            
+                            elif content:
+                                # Single method result
+                                method_name = advanced_result.get('method', 'unknown')
+                                
+                                # Save HTML if enabled
+                                if save_html_files:
+                                    st.info(f"💾 HTML opslaan voor {method_name}...")
+                                    pseudo_html = f"<html><body><div class='extracted-content'>{content.replace('\n', '<br>')}</div></body></html>"
+                                    file_info = save_html_for_ai_analysis(test_url, pseudo_html, method_name)
+                                    if file_info['success']:
+                                        saved_files.append(file_info)
+                                        st.success(f"✅ HTML opgeslagen: {file_info['filename']}")
+                                
+                                # AI extraction if enabled
+                                if use_ai_extraction and openai_api_key:
+                                    st.info(f"🤖 AI extractie voor {method_name}...")
+                                    ai_result = ai_extract_contact_data(
+                                        content, 
+                                        test_url, 
+                                        use_openai=True,
+                                        model=ai_model_choice
+                                    )
+                                    if ai_result['success']:
+                                        ai_result['method'] = method_name
+                                        ai_results.append(ai_result)
+                                        st.success(f"✅ AI extractie voltooid voor {method_name}")
+                                    else:
+                                        st.warning(f"⚠️ AI extractie gefaald voor {method_name}: {ai_result.get('error', 'Unknown error')}")
                             
                             if content:
                                 # Check if we have individual contents from multiple methods
@@ -1940,6 +2202,217 @@ with tab1:
                             import pandas as pd
                             summary_df = pd.DataFrame(summary_data)
                             st.dataframe(summary_df)
+                    
+                    # Show AI extraction results if available
+                    if 'ai_results' in locals() and ai_results:
+                        st.markdown("---")
+                        st.subheader("🤖 AI Extractie Resultaten")
+                        
+                        # Combined AI results
+                        all_ai_emails = set()
+                        all_ai_phones = set()
+                        all_ai_addresses = set()
+                        all_ai_managers = set()
+                        all_ai_openingstijden = set()
+                        all_ai_vestiging_info = set()
+                        
+                        for ai_result in ai_results:
+                            extracted = ai_result.get('extracted_data', {})
+                            all_ai_emails.update(extracted.get('emails', []))
+                            all_ai_phones.update(extracted.get('telefoons', []))
+                            all_ai_addresses.update(extracted.get('adressen', []))
+                            all_ai_managers.update(extracted.get('managers', []))
+                            all_ai_openingstijden.update(extracted.get('openingstijden', []))
+                            all_ai_vestiging_info.update(extracted.get('vestiging_info', []))
+                        
+                        st.subheader("🎯 Gecombineerde AI Resultaten")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write("**📧 AI - Emails gevonden:**")
+                            for email in all_ai_emails:
+                                st.write(f"• {email}")
+                            
+                            st.write("**📞 AI - Telefoonnummers gevonden:**")
+                            for phone in all_ai_phones:
+                                st.write(f"• {phone}")
+                            
+                            st.write("**📍 AI - Adressen gevonden:**")
+                            for addr in all_ai_addresses:
+                                st.write(f"• {addr}")
+                        
+                        with col2:
+                            st.write("**👥 AI - Managers gevonden:**")
+                            for manager in all_ai_managers:
+                                st.write(f"• {manager}")
+                            
+                            st.write("**🕒 AI - Openingstijden:**")
+                            for tijd in all_ai_openingstijden:
+                                st.write(f"• {tijd}")
+                            
+                            st.write("**🏢 AI - Vestiging info:**")
+                            for info in all_ai_vestiging_info:
+                                st.write(f"• {info}")
+                        
+                        # Show individual AI results per method
+                        if len(ai_results) > 1:
+                            st.subheader("🔍 AI Resultaten per methode")
+                            ai_tabs = st.tabs([f"🤖 {ai_res['method']}" for ai_res in ai_results])
+                            
+                            for i, ai_result in enumerate(ai_results):
+                                with ai_tabs[i]:
+                                    extracted = ai_result.get('extracted_data', {})
+                                    confidence = extracted.get('confidence', 'Onbekend')
+                                    
+                                    st.info(f"**Model:** {ai_result.get('method', 'unknown')} | **Confidence:** {confidence}")
+                                    
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        if extracted.get('emails'):
+                                            st.write("📧 **Emails:**")
+                                            for email in extracted['emails']:
+                                                st.write(f"• {email}")
+                                        if extracted.get('telefoons'):
+                                            st.write("📞 **Telefoons:**")
+                                            for phone in extracted['telefoons']:
+                                                st.write(f"• {phone}")
+                                    
+                                    with col2:
+                                        if extracted.get('adressen'):
+                                            st.write("📍 **Adressen:**")
+                                            for addr in extracted['adressen']:
+                                                st.write(f"• {addr}")
+                                        if extracted.get('managers'):
+                                            st.write("👥 **Managers:**")
+                                            for manager in extracted['managers']:
+                                                st.write(f"• {manager}")
+                                    
+                                    if extracted.get('openingstijden'):
+                                        st.write("🕒 **Openingstijden:**")
+                                        for tijd in extracted['openingstijden']:
+                                            st.write(f"• {tijd}")
+                                    
+                                    if extracted.get('vestiging_info'):
+                                        st.write("🏢 **Vestiging Info:**")
+                                        for info in extracted['vestiging_info']:
+                                            st.write(f"• {info}")
+                        
+                        # Comparison between AI and Regex if enabled
+                        if compare_methods and result:
+                            st.markdown("---")
+                            st.subheader("🔍 Vergelijking: AI vs Regex")
+                            
+                            comparison_data = []
+                            
+                            # Compare emails
+                            regex_emails = set(result.get('emails', []))
+                            ai_only_emails = all_ai_emails - regex_emails
+                            regex_only_emails = regex_emails - all_ai_emails
+                            common_emails = all_ai_emails & regex_emails
+                            
+                            comparison_data.append({
+                                'Type': 'Emails',
+                                'Regex': len(regex_emails),
+                                'AI': len(all_ai_emails),
+                                'Gemeenschappelijk': len(common_emails),
+                                'Alleen AI': len(ai_only_emails),
+                                'Alleen Regex': len(regex_only_emails)
+                            })
+                            
+                            # Compare phones
+                            regex_phones = set(result.get('telefoons', []))
+                            ai_only_phones = all_ai_phones - regex_phones
+                            regex_only_phones = regex_phones - all_ai_phones
+                            common_phones = all_ai_phones & regex_phones
+                            
+                            comparison_data.append({
+                                'Type': 'Telefoons',
+                                'Regex': len(regex_phones),
+                                'AI': len(all_ai_phones),
+                                'Gemeenschappelijk': len(common_phones),
+                                'Alleen AI': len(ai_only_phones),
+                                'Alleen Regex': len(regex_only_phones)
+                            })
+                            
+                            # Compare addresses
+                            regex_addresses = set(result.get('adressen', []))
+                            ai_only_addresses = all_ai_addresses - regex_addresses
+                            regex_only_addresses = regex_addresses - all_ai_addresses
+                            common_addresses = all_ai_addresses & regex_addresses
+                            
+                            comparison_data.append({
+                                'Type': 'Adressen',
+                                'Regex': len(regex_addresses),
+                                'AI': len(all_ai_addresses),
+                                'Gemeenschappelijk': len(common_addresses),
+                                'Alleen AI': len(ai_only_addresses),
+                                'Alleen Regex': len(regex_only_addresses)
+                            })
+                            
+                            comp_df = pd.DataFrame(comparison_data)
+                            st.dataframe(comp_df)
+                            
+                            # Show unique findings
+                            if ai_only_emails or ai_only_phones or ai_only_addresses:
+                                st.subheader("🤖 Uniek gevonden door AI:")
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    if ai_only_emails:
+                                        st.write("**📧 Emails:**")
+                                        for email in ai_only_emails:
+                                            st.write(f"• {email}")
+                                with col2:
+                                    if ai_only_phones:
+                                        st.write("**📞 Telefoons:**")
+                                        for phone in ai_only_phones:
+                                            st.write(f"• {phone}")
+                                with col3:
+                                    if ai_only_addresses:
+                                        st.write("**📍 Adressen:**")
+                                        for addr in ai_only_addresses:
+                                            st.write(f"• {addr}")
+                            
+                            if regex_only_emails or regex_only_phones or regex_only_addresses:
+                                st.subheader("🔧 Uniek gevonden door Regex:")
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    if regex_only_emails:
+                                        st.write("**📧 Emails:**")
+                                        for email in regex_only_emails:
+                                            st.write(f"• {email}")
+                                with col2:
+                                    if regex_only_phones:
+                                        st.write("**📞 Telefoons:**")
+                                        for phone in regex_only_phones:
+                                            st.write(f"• {phone}")
+                                with col3:
+                                    if regex_only_addresses:
+                                        st.write("**📍 Adressen:**")
+                                        for addr in regex_only_addresses:
+                                            st.write(f"• {addr}")
+                    
+                    # Show saved files info
+                    if 'saved_files' in locals() and saved_files:
+                        st.markdown("---")
+                        st.subheader("💾 Opgeslagen HTML Bestanden")
+                        
+                        for file_info in saved_files:
+                            with st.expander(f"📁 {file_info['filename']} ({file_info.get('method', 'unknown')})"):
+                                st.write(f"**Bestandsgrootte:** {file_info['file_size']:,} characters")
+                                st.write(f"**Timestamp:** {file_info['timestamp']}")
+                                st.write(f"**Bestandspad:** `{file_info['filepath']}`")
+                                st.write(f"**URL:** {file_info['url']}")
+                                st.write(f"**Scraping methode:** {file_info.get('method', 'unknown')}")
+                                
+                                if st.button(f"🗑️ Verwijder bestand", key=f"delete_{file_info['filename']}"):
+                                    try:
+                                        if os.path.exists(file_info['filepath']):
+                                            os.remove(file_info['filepath'])
+                                            st.success(f"✅ Bestand {file_info['filename']} verwijderd")
+                                        else:
+                                            st.warning("⚠️ Bestand niet gevonden")
+                                    except Exception as e:
+                                        st.error(f"❌ Kon bestand niet verwijderen: {str(e)}")
                     
                     # Altijd debug info tonen bij test modus
                     if 'debug_info' in result:

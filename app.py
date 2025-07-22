@@ -475,13 +475,18 @@ def zoek_website_bij_naam(locatienaam, plaats):
 # Enhanced async scraping functions
 async def fetch_page(session, url):
     try:
-        async with session.get(url, timeout=10) as response:
-            return await response.text()
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        async with session.get(url, timeout=15, headers=headers) as response:
+            if response.status == 200:
+                return await response.text()
+            return None
     except Exception as e:
         return None
 
 async def scrape_deep(url, max_depth=2):
-    result = {"emails": set(), "telefoons": set(), "adressen": set(), "managers": set(), "error": ""}
+    result = {"emails": set(), "telefoons": set(), "adressen": set(), "managers": set(), "error": "", "debug_info": []}
     visited = set()
     base_url = url
 
@@ -491,36 +496,166 @@ async def scrape_deep(url, max_depth=2):
                 return
             visited.add(url)
             
+            result["debug_info"].append(f"Scraping: {url} (depth: {depth})")
+            
             html = await fetch_page(session, url)
             if not html:
+                result["debug_info"].append(f"Failed to fetch: {url}")
                 return
 
             soup = BeautifulSoup(html, 'html.parser')
-            text = soup.get_text(separator="\n")
             
-            # Extract data
-            result['emails'].update(re.findall(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}", text))
-            for match in phonenumbers.PhoneNumberMatcher(text, "NL"):
-                result['telefoons'].add(phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL))
-            result['adressen'].update(re.findall(r"[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+|\d{4}\s?[A-Z]{2}", text))
-            result['managers'].update(line.strip() for line in text.split("\n") if re.search(r"locatiemanager|manager|directeur", line, flags=re.IGNORECASE))
+            # Remove script and style elements
+            for script in soup(["script", "style"]):
+                script.extract()
             
-            # Find more links
+            # Get text with better separation
+            text = soup.get_text(separator=" ", strip=True)
+            
+            # Also get text from specific elements that often contain contact info
+            contact_selectors = [
+                'div[class*="contact"]', 'div[class*="Contact"]',
+                'div[class*="team"]', 'div[class*="Team"]',
+                'div[class*="staff"]', 'div[class*="Staff"]',
+                'div[class*="medewerker"]', 'div[class*="Medewerker"]',
+                'div[class*="locatie"]', 'div[class*="Locatie"]',
+                'section[class*="contact"]', 'section[class*="team"]',
+                'footer', '.footer'
+            ]
+            
+            contact_text = ""
+            for selector in contact_selectors:
+                elements = soup.select(selector)
+                for elem in elements:
+                    contact_text += " " + elem.get_text(separator=" ", strip=True)
+            
+            # Combine all text
+            full_text = text + " " + contact_text
+            
+            # Extract emails - verbeterde regex
+            email_patterns = [
+                r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}",
+                r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+                r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
+            ]
+            
+            for pattern in email_patterns:
+                emails = re.findall(pattern, full_text)
+                # Filter out common non-email matches
+                for email in emails:
+                    if not any(skip in email.lower() for skip in ['@example', '@domain', '@test', 'noreply', 'no-reply']):
+                        result['emails'].add(email.lower().strip())
+            
+            # Extract phone numbers - betere detectie
+            phone_text = re.sub(r'[^\d\s\+\-\(\)]+', ' ', full_text)  # Clean text for phone detection
+            try:
+                for match in phonenumbers.PhoneNumberMatcher(phone_text, "NL"):
+                    formatted = phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+                    result['telefoons'].add(formatted)
+                    
+                # Also try to find phone numbers with regex as backup
+                phone_patterns = [
+                    r'(?:\+31|0031|0)[\s\-]?6[\s\-]?[\d\s\-]{8}',  # Dutch mobile
+                    r'(?:\+31|0031|0)[\s\-]?[1-9][\d\s\-]{8}',     # Dutch landline
+                    r'\b\d{2,3}[\s\-]?\d{6,7}\b',                  # Simple pattern
+                    r'\b\d{10,11}\b'                               # Just digits
+                ]
+                
+                for pattern in phone_patterns:
+                    phones = re.findall(pattern, full_text)
+                    for phone in phones:
+                        cleaned = re.sub(r'[^\d\+]', '', phone)
+                        if len(cleaned) >= 9:
+                            result['telefoons'].add(phone.strip())
+                            
+            except Exception as e:
+                result["debug_info"].append(f"Phone extraction error: {str(e)}")
+            
+            # Extract addresses - verbeterde patronen
+            address_patterns = [
+                r'\b[A-Z][a-z]+(?:straat|laan|weg|plein|dreef|park|square|boulevard)\s*\d+[a-z]?\b',
+                r'\b\d{4}\s?[A-Z]{2}\s+[A-Z][a-z]+',  # Postcode + plaats
+                r'\b\d{4}\s?[A-Z]{2}\b'  # Alleen postcode
+            ]
+            
+            for pattern in address_patterns:
+                addresses = re.findall(pattern, full_text)
+                result['adressen'].update(addr.strip() for addr in addresses)
+            
+            # Extract managers - uitgebreidere zoektermen
+            manager_keywords = [
+                r'locatiemanager', r'locatie\s*manager',
+                r'manager', r'directeur', r'directrice',
+                r'leidinggevende', r'teamleider', r'teamleidster',
+                r'hoofd\s*vestiging', r'vestigingsmanager',
+                r'pedagogisch\s*medewerker', r'pm\b',
+                r'locatiecoördinator', r'coördinator'
+            ]
+            
+            lines = full_text.split('\n')
+            for line in lines:
+                line = line.strip()
+                if len(line) > 5 and len(line) < 100:  # Reasonable length for a name/title
+                    for keyword in manager_keywords:
+                        if re.search(keyword, line, flags=re.IGNORECASE):
+                            # Try to extract name from the line
+                            # Look for patterns like "Manager: John Doe" or "John Doe - Manager"
+                            name_patterns = [
+                                r'([A-Z][a-z]+\s+[A-Z][a-z]+)',  # First Last
+                                r'([A-Z]\.\s*[A-Z][a-z]+)',      # F. Last
+                                r'([A-Z][a-z]+\s+[A-Z]\.\s*[A-Z][a-z]+)'  # First F. Last
+                            ]
+                            
+                            for name_pattern in name_patterns:
+                                names = re.findall(name_pattern, line)
+                                for name in names:
+                                    if not any(skip in name.lower() for skip in ['lorem', 'ipsum', 'example']):
+                                        result['managers'].add(f"{name.strip()} ({keyword})")
+                            
+                            # If no name found, add the whole line if it's reasonable
+                            if not result['managers']:
+                                result['managers'].add(line[:80] + ("..." if len(line) > 80 else ""))
+                            break
+            
+            result["debug_info"].append(f"Found on {url}: {len(result['emails'])} emails, {len(result['telefoons'])} phones, {len(result['adressen'])} addresses, {len(result['managers'])} managers")
+            
+            # Find more links for deeper scraping
             if depth < max_depth:
-                links = soup.find_all('a', href=True)
-                for link in links:
+                contact_links = []
+                for link in soup.find_all('a', href=True):
                     href = link['href']
-                    if href.startswith('/') or href.startswith(base_url):
-                        full_url = urljoin(base_url, href)
+                    text = link.get_text(strip=True).lower()
+                    
+                    # Look for contact/team related links
+                    if any(word in text for word in ['contact', 'team', 'over', 'medewerker', 'locatie']):
+                        if href.startswith('/'):
+                            full_url = urljoin(base_url, href)
+                        elif href.startswith(base_url):
+                            full_url = href
+                        else:
+                            continue
+                            
                         if full_url not in visited and base_url in full_url:
-                            await process_page(full_url, depth + 1)
+                            contact_links.append(full_url)
+                
+                # Process a few promising links
+                for link in contact_links[:3]:  # Limit to avoid too many requests
+                    await process_page(link, depth + 1)
 
         try:
             await process_page(url, 0)
         except Exception as e:
             result['error'] = str(e)
+            result["debug_info"].append(f"Main scraping error: {str(e)}")
 
-    return {k: list(v) if isinstance(v, set) else v for k, v in result.items()}
+    # Convert sets to lists and remove debug_info from final result
+    final_result = {k: list(v) if isinstance(v, set) else v for k, v in result.items() if k != "debug_info"}
+    
+    # Add debug info only if there were issues
+    if result.get('error') or not any([final_result.get('emails'), final_result.get('telefoons'), final_result.get('adressen')]):
+        final_result['debug_info'] = result["debug_info"]
+    
+    return final_result
 
 # Function to backup search if SerpAPI fails
 async def backup_search(locatienaam, plaats):
@@ -574,7 +709,7 @@ tab1, tab2, tab3 = st.tabs(["Zoeken", "Geschiedenis", "Notities"])
 
 with tab1:
     # Mode select
-    mode = st.radio("Invoermodus:", ["Bestand upload", "Handmatige invoer"])
+    mode = st.radio("Invoermodus:", ["Bestand upload", "Handmatige invoer", "Test website"])
     input_df = pd.DataFrame()
     if mode == "Bestand upload":
         uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
@@ -607,6 +742,70 @@ with tab1:
                     for index in sorted(te_verwijderen, reverse=True):
                         st.session_state.manual_rows.pop(index)
                     st.rerun()
+    
+    elif mode == "Test website":
+        st.info("Test de scraper met een directe website URL om te zien of de informatie correct wordt geëxtraheerd.")
+        test_url = st.text_input("Website URL (bijvoorbeeld: https://example.com)")
+        
+        if test_url and st.button("Test Scraping"):
+            with st.spinner("Bezig met testen van website..."):
+                try:
+                    # Test de scraping functie direct
+                    result = asyncio.run(scrape_deep(test_url))
+                    
+                    st.subheader("Test Resultaten")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write("**📧 Emails gevonden:**")
+                        if result.get('emails'):
+                            for email in result['emails']:
+                                st.write(f"• {email}")
+                        else:
+                            st.write("Geen emails gevonden")
+                        
+                        st.write("**📞 Telefoonnummers gevonden:**")
+                        if result.get('telefoons'):
+                            for phone in result['telefoons']:
+                                st.write(f"• {phone}")
+                        else:
+                            st.write("Geen telefoonnummers gevonden")
+                    
+                    with col2:
+                        st.write("**📍 Adressen gevonden:**")
+                        if result.get('adressen'):
+                            for addr in result['adressen']:
+                                st.write(f"• {addr}")
+                        else:
+                            st.write("Geen adressen gevonden")
+                        
+                        st.write("**👥 Managers/Medewerkers gevonden:**")
+                        if result.get('managers'):
+                            for manager in result['managers']:
+                                st.write(f"• {manager}")
+                        else:
+                            st.write("Geen managers gevonden")
+                    
+                    # Altijd debug info tonen bij test modus
+                    if 'debug_info' in result:
+                        st.subheader("🐛 Debug Informatie")
+                        for debug_line in result['debug_info']:
+                            st.text(debug_line)
+                    
+                    if result.get('error'):
+                        st.error(f"Fout opgetreden: {result['error']}")
+                    
+                    # Mogelijkheid om test toe te voegen aan reguliere scraping
+                    if st.button("Voeg toe aan scraping lijst"):
+                        naam = st.text_input("Locatienaam voor deze test", key="test_naam")
+                        plaats = st.text_input("Plaats voor deze test", key="test_plaats")
+                        if naam and plaats:
+                            st.session_state.manual_rows.append({"locatienaam": naam, "plaats": plaats})
+                            st.success("Toegevoegd aan handmatige invoer!")
+                        
+                except Exception as e:
+                    st.error(f"Test mislukt: {str(e)}")
+                    st.write("Controleer of de URL correct is en probeer opnieuw.")
 
     # Start scraping
     if not input_df.empty:
@@ -668,7 +867,22 @@ with tab1:
         if st.session_state.resultaten:
             res_df = pd.DataFrame(st.session_state.resultaten)
             st.subheader("Resultaten")
-            st.dataframe(res_df)
+            
+            # Toon debug info als er problemen zijn
+            debug_results = [r for r in st.session_state.resultaten if 'debug_info' in r]
+            if debug_results and st.checkbox("Toon debug informatie"):
+                st.warning("Debug informatie beschikbaar voor problematische locaties:")
+                for result in debug_results:
+                    if 'debug_info' in result:
+                        with st.expander(f"Debug: {result['locatienaam']} - {result['plaats']}"):
+                            st.write("**Website:**", result.get('website', 'Niet gevonden'))
+                            st.write("**Debug log:**")
+                            for debug_line in result['debug_info']:
+                                st.text(debug_line)
+            
+            # Verwijder debug_info uit dataframe voor normale weergave
+            display_df = res_df.drop(columns=['debug_info'], errors='ignore')
+            st.dataframe(display_df)
         
         # Export and visualizations
         if st.session_state.resultaten:

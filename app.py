@@ -1046,12 +1046,7 @@ def scrape_contactgegevens(url):
         result['error'] = str(e)
     return result
 
-# Voeg toe na de andere import statements
-import subprocess
-import tempfile
-import os
-
-# Voeg deze functie toe na extract_main_content
+# Advanced scraping fallback methods
 def selenium_scrape_fallback(url):
     """Selenium-gebaseerde scraper voor websites die requests blokkeren"""
     try:
@@ -1194,8 +1189,8 @@ def curl_subprocess_fallback(url):
     except Exception as e:
         return {"success": False, "error": str(e), "method": "curl"}
 
-def try_all_fallback_methods(url):
-    """Probeer alle beschikbare methoden tot één werkt"""
+def try_all_fallback_methods(url, combine_results=True):
+    """Probeer alle beschikbare methoden en combineer de resultaten"""
     methods = [
         ("Selenium Browser", selenium_scrape_fallback),
         ("Wayback Machine", wayback_machine_fallback), 
@@ -1205,34 +1200,175 @@ def try_all_fallback_methods(url):
     ]
     
     results = []
+    all_content = []
+    successful_methods = []
     
     for method_name, method_func in methods:
         try:
+            st.info(f"🔄 Probeer methode: {method_name}")
             result = method_func(url)
             results.append({
                 "method": method_name,
                 "result": result
             })
             
-            # Als deze methode werkt, return meteen
             if result.get("success"):
-                return {
-                    "success": True,
-                    "content": result.get("content", ""),
-                    "method": method_name,
-                    "all_attempts": results
-                }
+                successful_methods.append(method_name)
+                content = result.get("content", "")
+                if content:
+                    all_content.append({
+                        "method": method_name,
+                        "content": content
+                    })
+                st.success(f"✅ {method_name} succesvol!")
+            else:
+                error_msg = result.get("error", "Unknown error")
+                st.warning(f"❌ {method_name} gefaald: {error_msg}")
+                
         except Exception as e:
+            st.error(f"❌ {method_name} exception: {str(e)}")
             results.append({
                 "method": method_name, 
                 "result": {"success": False, "error": str(e)}
             })
+    
+    if not combine_results:
+        # Oude gedrag - return eerste succesvolle
+        for result_data in results:
+            if result_data["result"].get("success"):
+                return {
+                    "success": True,
+                    "content": result_data["result"].get("content", ""),
+                    "method": result_data["method"],
+                    "all_attempts": results
+                }
+    
+    if all_content:
+        # Combineer alle content
+        combined_content = "\n\n--- CONTENT VAN MEERDERE METHODEN ---\n\n"
+        for content_data in all_content:
+            combined_content += f"=== {content_data['method']} ===\n"
+            combined_content += content_data['content']
+            combined_content += "\n\n"
+        
+        return {
+            "success": True,
+            "content": combined_content,
+            "method": f"Gecombineerd ({len(successful_methods)} methoden)",
+            "successful_methods": successful_methods,
+            "all_attempts": results,
+            "individual_contents": all_content
+        }
     
     # Alle methoden gefaald
     return {
         "success": False,
         "error": "All fallback methods failed",
         "all_attempts": results
+    }
+
+def extract_and_combine_contact_data(content_list):
+    """Combineer contactgegevens van meerdere content bronnen"""
+    combined_data = {
+        'emails': set(),
+        'telefoons': set(), 
+        'adressen': set(),
+        'managers': set(),
+        'sources': {}  # Track which source found what
+    }
+    
+    for content_data in content_list:
+        method = content_data['method']
+        content = content_data['content']
+        
+        # Initialize source tracking
+        combined_data['sources'][method] = {
+            'emails': [],
+            'telefoons': [],
+            'adressen': [],
+            'managers': []
+        }
+        
+        # Extract emails
+        email_patterns = [
+            r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}",
+            r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+        ]
+        
+        for pattern in email_patterns:
+            emails = re.findall(pattern, content)
+            for email in emails:
+                email = email.lower().strip()
+                if not any(skip in email for skip in ['example', 'test', 'noreply', 'no-reply']):
+                    combined_data['emails'].add(email)
+                    combined_data['sources'][method]['emails'].append(email)
+        
+        # Extract phone numbers
+        try:
+            for match in phonenumbers.PhoneNumberMatcher(content, "NL"):
+                formatted = phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+                combined_data['telefoons'].add(formatted)
+                combined_data['sources'][method]['telefoons'].append(formatted)
+                
+            # Backup regex for phones
+            phone_patterns = [
+                r'(?:\+31|0031|0)[\s\-]?6[\s\-]?[\d\s\-]{8}',  # Dutch mobile
+                r'(?:\+31|0031|0)[\s\-]?[1-9][\d\s\-]{8}',     # Dutch landline
+                r'\b\d{2,3}[\s\-]?\d{6,7}\b'
+            ]
+            
+            for pattern in phone_patterns:
+                phones = re.findall(pattern, content)
+                for phone in phones:
+                    cleaned = re.sub(r'[^\d\+]', '', phone)
+                    if len(cleaned) >= 9:
+                        phone = phone.strip()
+                        combined_data['telefoons'].add(phone)
+                        combined_data['sources'][method]['telefoons'].append(phone)
+                        
+        except Exception:
+            pass
+        
+        # Extract addresses  
+        addr_patterns = [
+            r'\b[A-Z][a-z]+(?:straat|laan|weg|plein|dreef|park|boulevard)\s*\d+[a-z]?\b',
+            r'\b\d{4}\s?[A-Z]{2}\s+[A-Z][a-z]+',
+            r'\b\d{4}\s?[A-Z]{2}\b'
+        ]
+        
+        for pattern in addr_patterns:
+            addresses = re.findall(pattern, content)
+            for addr in addresses:
+                addr = addr.strip()
+                combined_data['adressen'].add(addr)
+                combined_data['sources'][method]['adressen'].append(addr)
+        
+        # Extract managers
+        manager_keywords = [
+            r'locatiemanager', r'locatie\s*manager',
+            r'manager', r'directeur', r'directrice',
+            r'leidinggevende', r'teamleider', r'teamleidster',
+            r'hoofd\s*vestiging', r'vestigingsmanager',
+            r'pedagogisch\s*medewerker', r'pm\b'
+        ]
+        
+        lines = content.split('\n')
+        for line in lines:
+            line = line.strip()
+            if 10 < len(line) < 100:
+                for keyword in manager_keywords:
+                    if re.search(keyword, line, flags=re.IGNORECASE):
+                        combined_data['managers'].add(line)
+                        combined_data['sources'][method]['managers'].append(line)
+                        break
+    
+    # Convert sets to lists
+    return {
+        'emails': list(combined_data['emails']),
+        'telefoons': list(combined_data['telefoons']),
+        'adressen': list(combined_data['adressen']),
+        'managers': list(combined_data['managers']),
+        'sources': combined_data['sources']
     }
 
 # Scraper UI
@@ -1300,6 +1436,13 @@ with tab1:
             help="Deze methode wordt gebruikt als de standaard scraper wordt geblokkeerd"
         )
         
+        # Combinatie optie
+        combine_all_methods = st.checkbox(
+            "🔄 Gebruik ALLE methoden en combineer resultaten", 
+            value=True,
+            help="Probeert alle scraping methoden (ook als één succesvol is) en combineert alle gevonden data"
+        )
+        
         if test_url and st.button("Test Scraping"):
             with st.spinner("Bezig met testen van website..."):
                 try:
@@ -1311,65 +1454,94 @@ with tab1:
                                     (not result.get('emails') and not result.get('telefoons') and not result.get('adressen')) or
                                     any('HTTP_ERROR_403' in str(debug) for debug in result.get('debug_info', [])))
                     
-                    if scraper_failed:
-                        st.info("Standaard scraper gefaald, probeer geavanceerde methoden...")
-                        
-                        # Try the selected fallback method
-                        advanced_result = None
-                        
-                        if fallback_method == "Automatisch (probeer alle methoden)":
-                            advanced_result = try_all_fallback_methods(test_url)
-                        elif fallback_method == "Selenium Browser Automation":
-                            advanced_result = selenium_scrape_fallback(test_url)
-                        elif fallback_method == "Wayback Machine Archive":
-                            advanced_result = wayback_machine_fallback(test_url)
-                        elif fallback_method == "Curl Subprocess":
-                            advanced_result = curl_subprocess_fallback(test_url)
-                        elif fallback_method == "Proxy Rotation":
-                            advanced_result = proxy_scrape_fallback(test_url)
-                        elif fallback_method == "ScrapeOwl API Service":
-                            advanced_result = scrapeowl_api_fallback(test_url)
+                    if scraper_failed or combine_all_methods:
+                        if combine_all_methods:
+                            st.info("🔄 Gebruik alle beschikbare methoden en combineer resultaten...")
+                            # Gebruik altijd alle methoden als combinatie is aangevinkt
+                            advanced_result = try_all_fallback_methods(test_url, combine_results=True)
+                        else:
+                            st.info("Standaard scraper gefaald, probeer geavanceerde methoden...")
+                            
+                            # Try the selected fallback method
+                            advanced_result = None
+                            
+                            if fallback_method == "Automatisch (probeer alle methoden)":
+                                advanced_result = try_all_fallback_methods(test_url, combine_results=False)
+                            elif fallback_method == "Selenium Browser Automation":
+                                advanced_result = selenium_scrape_fallback(test_url)
+                            elif fallback_method == "Wayback Machine Archive":
+                                advanced_result = wayback_machine_fallback(test_url)
+                            elif fallback_method == "Curl Subprocess":
+                                advanced_result = curl_subprocess_fallback(test_url)
+                            elif fallback_method == "Proxy Rotation":
+                                advanced_result = proxy_scrape_fallback(test_url)
+                            elif fallback_method == "ScrapeOwl API Service":
+                                advanced_result = scrapeowl_api_fallback(test_url)
                         
                         if advanced_result and advanced_result.get('success'):
-                            # Extract contact info from the successful content
                             content = advanced_result.get('content', '')
+                            
                             if content:
-                                # Parse the content for contact info
-                                emails = re.findall(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}", content)
-                                phones = []
-                                try:
-                                    for match in phonenumbers.PhoneNumberMatcher(content, "NL"):
-                                        phones.append(phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL))
-                                except:
-                                    pass
-                                
-                                addr_patterns = [
-                                    r'\b[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+[a-z]?\b',
-                                    r'\b\d{4}\s?[A-Z]{2}\b'
-                                ]
-                                addresses = []
-                                for pattern in addr_patterns:
-                                    addresses.extend(re.findall(pattern, content))
-                                
-                                managers = []
-                                lines = content.split('\n')
-                                for line in lines:
-                                    if 10 < len(line.strip()) < 80:
-                                        if re.search(r'locatiemanager|manager|directeur', line, flags=re.IGNORECASE):
-                                            managers.append(line.strip())
-                                
-                                # Update result with found data
-                                result = {
-                                    'emails': emails,
-                                    'telefoons': phones, 
-                                    'adressen': addresses,
-                                    'managers': managers,
-                                    'debug_info': [
-                                        f"Standaard scraper gefaald",
-                                        f"Succesvol met: {advanced_result.get('method', 'unknown')}",
-                                        f"Content lengte: {len(content)} characters"
+                                # Check if we have individual contents from multiple methods
+                                if 'individual_contents' in advanced_result and advanced_result['individual_contents']:
+                                    st.success(f"✅ Data gecombineerd van {len(advanced_result['successful_methods'])} methoden!")
+                                    
+                                    # Use advanced extraction with source tracking
+                                    combined_contact_data = extract_and_combine_contact_data(advanced_result['individual_contents'])
+                                    
+                                    result = {
+                                        'emails': combined_contact_data['emails'],
+                                        'telefoons': combined_contact_data['telefoons'],
+                                        'adressen': combined_contact_data['adressen'], 
+                                        'managers': combined_contact_data['managers'],
+                                        'sources': combined_contact_data['sources'],  # Track sources
+                                        'debug_info': [
+                                            f"Gecombineerde data van: {', '.join(advanced_result.get('successful_methods', []))}",
+                                            f"Totaal emails: {len(combined_contact_data['emails'])}",
+                                            f"Totaal telefoons: {len(combined_contact_data['telefoons'])}",
+                                            f"Totaal adressen: {len(combined_contact_data['adressen'])}",
+                                            f"Totaal managers: {len(combined_contact_data['managers'])}",
+                                        ]
+                                    }
+                                else:
+                                    # Single method result
+                                    st.success(f"✅ Succesvol gescraped met: {advanced_result.get('method')}")
+                                    
+                                    # Parse the content for contact info (original logic)
+                                    emails = re.findall(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}", content)
+                                    phones = []
+                                    try:
+                                        for match in phonenumbers.PhoneNumberMatcher(content, "NL"):
+                                            phones.append(phonenumbers.format_number(match.number, phonenumbers.PhoneNumberFormat.INTERNATIONAL))
+                                    except:
+                                        pass
+                                    
+                                    addr_patterns = [
+                                        r'\b[A-Z][a-z]+(?:straat|laan|weg|plein|dreef)\s*\d+[a-z]?\b',
+                                        r'\b\d{4}\s?[A-Z]{2}\b'
                                     ]
-                                }
+                                    addresses = []
+                                    for pattern in addr_patterns:
+                                        addresses.extend(re.findall(pattern, content))
+                                    
+                                    managers = []
+                                    lines = content.split('\n')
+                                    for line in lines:
+                                        if 10 < len(line.strip()) < 80:
+                                            if re.search(r'locatiemanager|manager|directeur', line, flags=re.IGNORECASE):
+                                                managers.append(line.strip())
+                                    
+                                    # Update result with found data
+                                    result = {
+                                        'emails': emails,
+                                        'telefoons': phones, 
+                                        'adressen': addresses,
+                                        'managers': managers,
+                                        'debug_info': [
+                                            f"Succesvol met: {advanced_result.get('method', 'unknown')}",
+                                            f"Content lengte: {len(content)} characters"
+                                        ]
+                                    }
                                 
                                 # Show all attempts if available
                                 if 'all_attempts' in advanced_result:
@@ -1379,8 +1551,6 @@ with tab1:
                                         success = attempt['result'].get('success', False)
                                         error = attempt['result'].get('error', '')
                                         result['debug_info'].append(f"{method}: {'✅' if success else '❌'} {error}")
-                                
-                                st.success(f"✅ Succesvol gescraped met: {advanced_result.get('method')}")
                             else:
                                 result['debug_info'].append(f"Fallback methode werkte maar leverde geen content op")
                         else:
@@ -1419,6 +1589,68 @@ with tab1:
                                 st.write(f"• {manager}")
                         else:
                             st.write("Geen managers gevonden")
+                    
+                    # Show source breakdown if available
+                    if 'sources' in result and result['sources']:
+                        st.subheader("📊 Data per methode")
+                        
+                        # Create tabs for each successful method
+                        method_names = list(result['sources'].keys())
+                        if len(method_names) > 1:
+                            tabs = st.tabs(method_names)
+                            
+                            for i, (method, method_data) in enumerate(result['sources'].items()):
+                                with tabs[i]:
+                                    st.write(f"**Data gevonden door {method}:**")
+                                    
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        if method_data['emails']:
+                                            st.write("📧 **Emails:**")
+                                            for email in method_data['emails']:
+                                                st.write(f"• {email}")
+                                        if method_data['telefoons']:
+                                            st.write("📞 **Telefoons:**")
+                                            for phone in method_data['telefoons']:
+                                                st.write(f"• {phone}")
+                                    
+                                    with col2:
+                                        if method_data['adressen']:
+                                            st.write("📍 **Adressen:**")
+                                            for addr in method_data['adressen']:
+                                                st.write(f"• {addr}")
+                                        if method_data['managers']:
+                                            st.write("👥 **Managers:**")
+                                            for manager in method_data['managers']:
+                                                st.write(f"• {manager}")
+                                    
+                                    # Show stats
+                                    total_items = (len(method_data['emails']) + 
+                                                 len(method_data['telefoons']) + 
+                                                 len(method_data['adressen']) + 
+                                                 len(method_data['managers']))
+                                    st.info(f"Totaal {total_items} items gevonden door {method}")
+                        else:
+                            # Single method, show simplified view  
+                            st.info("Data gevonden door één methode (zie hierboven)")
+                            
+                        # Summary comparison
+                        st.subheader("🎯 Samenvatting per methode")
+                        summary_data = []
+                        for method, data in result['sources'].items():
+                            summary_data.append({
+                                'Methode': method,
+                                'Emails': len(data['emails']),
+                                'Telefoons': len(data['telefoons']),
+                                'Adressen': len(data['adressen']),
+                                'Managers': len(data['managers']),
+                                'Totaal': len(data['emails']) + len(data['telefoons']) + len(data['adressen']) + len(data['managers'])
+                            })
+                        
+                        if summary_data:
+                            import pandas as pd
+                            summary_df = pd.DataFrame(summary_data)
+                            st.dataframe(summary_df)
                     
                     # Altijd debug info tonen bij test modus
                     if 'debug_info' in result:

@@ -539,6 +539,133 @@ async def fetch_page(session, url, attempt=1, max_attempts=3):
             return await fetch_page(session, url, attempt + 1, max_attempts)
         return f"FETCH_ERROR: {error_msg}"
 
+def extract_main_content(html):
+    """Extraheert hoofdinhoud van HTML en converteert naar schone tekst"""
+    soup = BeautifulSoup(html, 'html.parser')
+    
+    # Remove unwanted elements
+    unwanted_tags = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'ads', 'advertisement']
+    for tag in unwanted_tags:
+        for element in soup.find_all(tag):
+            element.decompose()
+    
+    # Remove elements by class/id (common patterns for non-content)
+    unwanted_patterns = [
+        'nav', 'navigation', 'menu', 'sidebar', 'footer', 'header', 
+        'advertisement', 'ads', 'social', 'share', 'breadcrumb',
+        'cookie', 'popup', 'modal', 'overlay'
+    ]
+    
+    for pattern in unwanted_patterns:
+        # Find by class
+        for element in soup.find_all(attrs={'class': lambda x: x and any(pattern in str(c).lower() for c in x)}):
+            element.decompose()
+        # Find by id  
+        for element in soup.find_all(attrs={'id': lambda x: x and pattern in str(x).lower()}):
+            element.decompose()
+    
+    # Try to find main content area
+    main_content = None
+    
+    # Priority order for main content selectors
+    content_selectors = [
+        'main', 'article', '[role="main"]',
+        '.main-content', '.content', '.post-content', 
+        '.entry-content', '.page-content', '.article-content',
+        '.container .content', '.wrapper .content'
+    ]
+    
+    for selector in content_selectors:
+        main_content = soup.select_one(selector)
+        if main_content:
+            break
+    
+    # If no specific main content found, use body but filter more aggressively
+    if not main_content:
+        main_content = soup.find('body')
+        if main_content:
+            # Remove more potential noise when using full body
+            noise_selectors = [
+                'nav', 'header', 'footer', 'aside', '.sidebar', 
+                '.widget', '.menu', '.navigation'
+            ]
+            for selector in noise_selectors:
+                for element in main_content.select(selector):
+                    element.decompose()
+    
+    if not main_content:
+        main_content = soup  # Last resort
+    
+    # Convert to structured text
+    return html_to_structured_text(main_content)
+
+def html_to_structured_text(element):
+    """Converteert HTML element naar gestructureerde tekst"""
+    if not element:
+        return ""
+    
+    text_parts = []
+    
+    def process_element(elem, level=0):
+        if elem.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+            # Headers with markdown-style formatting
+            header_level = int(elem.name[1])
+            prefix = '#' * header_level + ' '
+            text_parts.append(f"\n{prefix}{elem.get_text(strip=True)}\n")
+        
+        elif elem.name in ['p', 'div', 'section']:
+            # Paragraphs and divs
+            text = elem.get_text(separator=' ', strip=True)
+            if text and len(text) > 10:  # Ignore very short texts
+                text_parts.append(f"{text}\n")
+        
+        elif elem.name in ['ul', 'ol']:
+            # Lists
+            for li in elem.find_all('li', recursive=False):
+                list_text = li.get_text(separator=' ', strip=True)
+                if list_text:
+                    text_parts.append(f"• {list_text}\n")
+        
+        elif elem.name == 'table':
+            # Tables - extract as structured text
+            for row in elem.find_all('tr'):
+                cells = [cell.get_text(strip=True) for cell in row.find_all(['td', 'th'])]
+                if any(cells):  # If row has content
+                    text_parts.append(" | ".join(cells) + "\n")
+        
+        elif elem.name in ['span', 'strong', 'em', 'b', 'i']:
+            # Inline elements - just get text
+            text = elem.get_text(separator=' ', strip=True)
+            if text:
+                text_parts.append(f"{text} ")
+        
+        elif elem.name == 'br':
+            text_parts.append("\n")
+        
+        elif elem.name is None:  # Text node
+            text = str(elem).strip()
+            if text and len(text) > 2:
+                text_parts.append(f"{text} ")
+        
+        else:
+            # For other elements, recurse into children
+            if hasattr(elem, 'children'):
+                for child in elem.children:
+                    if hasattr(child, 'name'):
+                        process_element(child, level + 1)
+    
+    process_element(element)
+    
+    # Join and clean up
+    result = ''.join(text_parts)
+    
+    # Clean up multiple newlines and spaces
+    result = re.sub(r'\n\s*\n\s*\n+', '\n\n', result)  # Max 2 newlines
+    result = re.sub(r' +', ' ', result)  # Multiple spaces to single
+    result = result.strip()
+    
+    return result
+
 async def quick_check_url(url):
     """Quick check if URL is reachable before full scraping"""
     try:
@@ -592,16 +719,21 @@ async def scrape_deep(url, max_depth=2):
                     result["debug_info"].append("-> Network or SSL error occurred")
                 return
 
+            # Extract main content using advanced content extraction
+            structured_text = extract_main_content(html)
+            result["debug_info"].append(f"Extracted {len(structured_text)} characters of structured text")
+            
+            # Also get the original soup for fallback
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Remove script and style elements
+            # Remove script and style elements from soup  
             for script in soup(["script", "style"]):
                 script.extract()
             
-            # Get text with better separation
-            text = soup.get_text(separator=" ", strip=True)
+            # Get basic text as fallback
+            basic_text = soup.get_text(separator=" ", strip=True)
             
-            # Also get text from specific elements that often contain contact info
+            # Also get text from specific contact-related elements
             contact_selectors = [
                 'div[class*="contact"]', 'div[class*="Contact"]',
                 'div[class*="team"]', 'div[class*="Team"]',
@@ -618,8 +750,8 @@ async def scrape_deep(url, max_depth=2):
                 for elem in elements:
                     contact_text += " " + elem.get_text(separator=" ", strip=True)
             
-            # Combine all text
-            full_text = text + " " + contact_text
+            # Use structured text as primary, with fallbacks
+            full_text = structured_text + " " + contact_text + " " + basic_text
             
             # Extract emails - verbeterde regex
             email_patterns = [
@@ -821,13 +953,21 @@ def scrape_contactgegevens(url):
                     raise
         
         resp.raise_for_status()
+        
+        # Extract main content using advanced content extraction
+        structured_text = extract_main_content(resp.text)
+        
+        # Also get basic soup text as fallback
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # Remove script and style elements
+        # Remove script and style elements from soup
         for script in soup(["script", "style"]):
             script.extract()
         
-        text = soup.get_text(separator=" ", strip=True)
+        basic_text = soup.get_text(separator=" ", strip=True)
+        
+        # Combine structured and basic text
+        text = structured_text + " " + basic_text
         
         # Enhanced email extraction
         email_patterns = [
@@ -950,6 +1090,10 @@ with tab1:
         st.info("Test de scraper met een directe website URL om te zien of de informatie correct wordt geëxtraheerd.")
         test_url = st.text_input("Website URL (bijvoorbeeld: https://example.com)")
         
+        # Content extraction optie
+        use_content_extraction = st.checkbox("Gebruik geavanceerde content extractie", value=True, 
+                                           help="Extraheert alleen de hoofdinhoud en filtert ruis weg")
+        
         if test_url and st.button("Test Scraping"):
             with st.spinner("Bezig met testen van website..."):
                 try:
@@ -1008,6 +1152,22 @@ with tab1:
                         st.subheader("🐛 Debug Informatie")
                         for debug_line in result['debug_info']:
                             st.text(debug_line)
+                    
+                    # Toon geëxtraheerde tekst optie
+                    if st.checkbox("Toon geëxtraheerde tekst", help="Zie de schone tekst die uit de HTML is gehaald"):
+                        try:
+                            # Haal de website opnieuw op om de tekst te laten zien
+                            import requests
+                            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                            resp = requests.get(test_url, headers=headers, timeout=10)
+                            if resp.status_code == 200:
+                                extracted_text = extract_main_content(resp.text)
+                                st.subheader("📄 Geëxtraheerde hoofdinhoud")
+                                st.text_area("Schone tekst", extracted_text, height=300)
+                            else:
+                                st.error(f"Kon website niet laden: HTTP {resp.status_code}")
+                        except Exception as e:
+                            st.error(f"Fout bij tekst extractie: {str(e)}")
                     
                     if result.get('error'):
                         st.error(f"Fout opgetreden: {result['error']}")
